@@ -1,5 +1,5 @@
-#ifndef VULKAN_FVULKANTRIANGLE_H
-#define VULKAN_FVULKANTRIANGLE_H
+#pragma once
+
 #define GLFW_INCLUDE_VULKAN
 
 #include <memory>
@@ -148,5 +148,3 @@ private:
 
   FQueueFamilyIndices QueueFamilyIndices{};
 };
-
-#endif //VULKAN_FVULKANTRIANGLE_H

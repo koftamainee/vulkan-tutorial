@@ -1,5 +1,4 @@
-#ifndef VULKAN_ERESULT_H
-#define VULKAN_ERESULT_H
+#pragma once
 
 #include <string>
 
@@ -111,5 +110,3 @@ inline void FDebug_EnsureFailed(const char *Expr,
         const VkResult _VkResult = (VkCall); \
         checkf(_VkResult == VK_SUCCESS, "VkResult != VK_SUCCESS"); \
     } while(0)
-
-#endif //VULKAN_ERESULT_H
