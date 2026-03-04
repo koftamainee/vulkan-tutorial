@@ -67,115 +67,85 @@ namespace {
   }
 }
 
-FVulkanTriangle::FVulkanTriangle(std::string &&ApplicationName, int WindowWidth, int WindowHeight) :
-  mApplicationName(std::move(ApplicationName)),
-  mWindowWidth(WindowWidth),
-  mWindowHeight(WindowHeight) {}
-
-
 FVulkanTriangle::~FVulkanTriangle() {
-  Cleanup();
-}
-
-
-std::expected<std::unique_ptr<FVulkanTriangle>, EResult> FVulkanTriangle::New(
-  std::string ApplicationName, int WindowWidth,
-  int WindowHeight) {
-
-  auto App = std::unique_ptr<FVulkanTriangle>(
-    new FVulkanTriangle(std::move(ApplicationName), WindowWidth, WindowHeight));
-
-  if (const auto Result = App->InitWindow(); Result != EResult::Success) { return std::unexpected(Result); }
-  if (const auto Result = App->InitVulkan(); Result != EResult::Success) { return std::unexpected(Result); }
-  return App;
-}
-
-EResult FVulkanTriangle::Run() {
-  if (const auto Result = MainLoop(); Result != EResult::Success) { return Result; }
-
-  return EResult::Success;
-}
-
-EResult FVulkanTriangle::InitWindow() {
-  if (const auto Result = glfwInit(); Result != GLFW_TRUE) { return EResult::GLFWInitFailed; }
-
-  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-  // glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-
-  mWindow = glfwCreateWindow(static_cast<int>(mWindowWidth), static_cast<int>(mWindowHeight),
-                             mApplicationName.c_str(), nullptr, nullptr);
-  if (mWindow == nullptr) {
-    return EResult::WindowCreationFailed;
+  if (bIsInitialized) {
+    Destroy();
+    bIsInitialized = false;
   }
-
-
-  return EResult::Success;
 }
 
-void FVulkanTriangle::DeinitWindow() {
-  if (mWindow != nullptr) { glfwDestroyWindow(mWindow); }
-  mWindow = nullptr;
-  glfwTerminate();
+void FVulkanTriangle::Init(std::string &&InApplicationName, int InWindowWidth, int InWindowHeight) {
+  check(!bIsInitialized);
+
+  ApplicationName = std::move(InApplicationName);
+  WindowWidth = InWindowWidth;
+  WindowHeight = InWindowHeight;
+
+  InitWindow();
+
+  InitVulkan();
+
+  bIsInitialized = true;
 }
 
-EResult FVulkanTriangle::InitVulkan() {
-  if (const auto Result = CreateVKInstance(); Result != EResult::Success) {
-    return Result;
+void FVulkanTriangle::Destroy() {
+  if (bIsInitialized) {
+    DeinitVulkan();
+    DeinitWindow();
+    bIsInitialized = false;
   }
+}
 
-  if (mEnableValidationLayers) {
-    if (const auto Result = CreateDebugMessenger(); Result != EResult::Success) {
-      DeinitVulkan();
-      return Result;
+void FVulkanTriangle::Run() {
+  check(bIsInitialized);
+  MainLoop();
+}
+
+void FVulkanTriangle::MainLoop() {
+  while (!glfwWindowShouldClose(Window)) {
+    glfwPollEvents();
+    const EResult Result = DrawFrame();
+    if (Result != EResult::Success) {
+      std::cerr << "Error during frame drawing occurred: " << ToString(Result) << ". Continuing...\n";
     }
   }
 
-  if (const auto Result = CreateSurface(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
-  }
+  vk_check(vkDeviceWaitIdle(Device));
+}
 
-  if (const auto Result = CreatePhysicalDevice(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
-  }
+void FVulkanTriangle::InitWindow() {
+  fatal(glfwInit() != GLFW_TRUE, "Failed to initialize GLFW");
 
-  if (const auto Result = CreateLogicalDevice(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
-  }
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-  if (const auto Result = CreateSwapChain(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
-  }
+  Window = glfwCreateWindow(WindowWidth, WindowHeight,
+                            ApplicationName.c_str(), nullptr, nullptr);
+  fatal(Window == nullptr, "Failed to create GLFW window");
+}
 
-  if (const auto Result = CreateImageViews(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
+void FVulkanTriangle::DeinitWindow() {
+  if (Window != nullptr) {
+    glfwDestroyWindow(Window);
+    Window = nullptr;
   }
+  glfwTerminate();
+}
 
-  if (const auto Result = CreateGraphicsPipeline(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
+void FVulkanTriangle::InitVulkan() {
+  CreateInstance();
+  if (EnableValidationLayers) {
+    CreateDebugMessenger();
   }
+  CreateSurface();
+  CreatePhysicalDevice();
+  CreateLogicalDevice();
+  CreateSwapChain();
+  CreateImageViews();
+  CreateGraphicsPipeline();
+  CreateCommandPool();
+  CreateCommandBuffer();
+  CreateSyncObjects();
 
-  if (const auto Result = CreateCommandPool(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
-  }
-
-  if (const auto Result = CreateCommandBuffer(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
-  }
-
-  if (const auto Result = CreateSyncObjects(); Result != EResult::Success) {
-    DeinitVulkan();
-    return Result;
-  }
-
-  return EResult::Success;
 }
 
 void FVulkanTriangle::DeinitVulkan() {
@@ -188,96 +158,55 @@ void FVulkanTriangle::DeinitVulkan() {
   DestroyLogicalDevice();
   DestroyPhysicalDevice();
   DestroySurface();
-  if (mEnableValidationLayers) {
+  if (EnableValidationLayers) {
     DestroyDebugMessenger();
   }
-  DestroyVKInstance();
+  DestroyInstance();
 }
 
-EResult FVulkanTriangle::MainLoop() {
-  uint64_t FrameCount = 0;
-  double LastTime = glfwGetTime();
-
-  while (!glfwWindowShouldClose(mWindow)) {
-    glfwPollEvents();
-    const auto Result = DrawFrame();
-    if (Result != EResult::Success) {
-      return Result;
-    }
-
-    ++FrameCount;
-    const double Now = glfwGetTime();
-    const double Delta = Now - LastTime;
-    if (Delta >= 1.0) {
-      const auto FPS = static_cast<uint64_t>(FrameCount / Delta);
-     std::cout << "FPS | " << FPS << "\n";
-      FrameCount = 0;
-      LastTime = Now;
-    }
-  }
-
-  const auto Result = vkDeviceWaitIdle(mDevice);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToWaitIdleDevice;
-  }
-  return EResult::Success;
-}
-
-void FVulkanTriangle::Cleanup() {
-  DeinitVulkan();
-  DeinitWindow();
-}
-
-EResult FVulkanTriangle::CreateVKInstance() {
+void FVulkanTriangle::CreateInstance() {
   const VkApplicationInfo AppInfo = {
     .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-    .pApplicationName = mApplicationName.c_str(),
+    .pApplicationName = ApplicationName.c_str(),
     .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
     .pEngineName = "No Engine",
     .engineVersion = VK_MAKE_VERSION(1, 0, 0),
     .apiVersion = VK_API_VERSION_1_4,
   };
 
-  auto ExtensionsResult = GetRequiredInstanceExtensions();
-  if (!ExtensionsResult) { return ExtensionsResult.error(); }
-  const auto &Extensions = ExtensionsResult.value();
+  std::vector<const char *> Extensions = GetRequiredInstanceExtensions();
 
   const VkDebugUtilsMessengerCreateInfoEXT DebugCreateInfo = MakeDebugUtilsMessengerCreateInfo();
 
   const VkInstanceCreateInfo CreateInfo = {
     .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-    .pNext = mEnableValidationLayers ? &DebugCreateInfo : nullptr,
+    .pNext = EnableValidationLayers ? &DebugCreateInfo : nullptr,
     .pApplicationInfo = &AppInfo,
-    .enabledLayerCount = mEnableValidationLayers
-    ? static_cast<uint32_t>(mValidationLayers.size())
+    .enabledLayerCount = EnableValidationLayers
+    ? static_cast<uint32_t>(ValidationLayers.size())
     : 0,
-    .ppEnabledLayerNames = mEnableValidationLayers
-    ? mValidationLayers.data()
+    .ppEnabledLayerNames = EnableValidationLayers
+    ? ValidationLayers.data()
     : nullptr,
     .enabledExtensionCount = static_cast<uint32_t>(Extensions.size()),
     .ppEnabledExtensionNames = Extensions.data(),
   };
 
-  auto const Result = vkCreateInstance(&CreateInfo, nullptr, &mInstance);
-  if (Result != VK_SUCCESS) { return EResult::FailedToCreateVkInstance; }
-
-  return EResult::Success;
+  vk_check(vkCreateInstance(&CreateInfo, nullptr, &Instance));
 }
 
-std::expected<std::vector<const char *>, EResult> FVulkanTriangle::GetRequiredInstanceExtensions() {
+std::vector<const char *> FVulkanTriangle::GetRequiredInstanceExtensions() {
   uint32_t GLFWExtensionsCount = 0;
   const char **GLFWExtensions = glfwGetRequiredInstanceExtensions(&GLFWExtensionsCount);
-  if (GLFWExtensionsCount == 0) {
-    return std::unexpected(EResult::FailedToGetGLFWExtensions);
-  }
+  fatal(GLFWExtensionsCount == 0, "Failed to get GLFW extensions");
+
 
   uint32_t VkExtensionsCount = 0;
-  auto Result = vkEnumerateInstanceExtensionProperties(nullptr, &VkExtensionsCount, nullptr);
-  if (Result != VK_SUCCESS) { return std::unexpected(EResult::FailedToGetVkExtensions); }
+  vk_check(vkEnumerateInstanceExtensionProperties(nullptr, &VkExtensionsCount, nullptr));
 
   std::vector<VkExtensionProperties> VkExtensions(VkExtensionsCount);
-  Result = vkEnumerateInstanceExtensionProperties(nullptr, &VkExtensionsCount, VkExtensions.data());
-  if (Result != VK_SUCCESS) { return std::unexpected(EResult::FailedToGetVkExtensions); }
+  vk_check(vkEnumerateInstanceExtensionProperties(nullptr, &VkExtensionsCount, VkExtensions.data()));
+
 
   for (uint32_t i = 0; i < GLFWExtensionsCount; ++i) {
     bool Found = false;
@@ -287,27 +216,44 @@ std::expected<std::vector<const char *>, EResult> FVulkanTriangle::GetRequiredIn
         break;
       }
     }
-    if (!Found) { return std::unexpected(EResult::RequiredGLFWExtensionIsNotSupported); }
+    fatal(!Found, "Required GLFW extensions are not supported");
   }
 
-  auto Extensions = std::vector<const char *>(GLFWExtensions, GLFWExtensions + GLFWExtensionsCount);
-  if (mEnableValidationLayers) {
+  std::vector<const char *> Extensions(GLFWExtensions, GLFWExtensions + GLFWExtensionsCount);
+  if (EnableValidationLayers) {
     Extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   }
 
   return Extensions;
 }
 
-EResult FVulkanTriangle::ValidateLayers() {
+void FVulkanTriangle::DestroyInstance() {
+  if (Instance != VK_NULL_HANDLE) { vkDestroyInstance(Instance, nullptr); }
+  Instance = VK_NULL_HANDLE;
+}
+
+void FVulkanTriangle::CreateDebugMessenger() {
+  check(Instance != VK_NULL_HANDLE);
+  ValidateLayers();
+
+  const auto vkCreateDebugUtilsMessenger = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+    vkGetInstanceProcAddr(Instance, "vkCreateDebugUtilsMessengerEXT"));
+  check(vkCreateDebugUtilsMessenger != nullptr);
+
+  const VkDebugUtilsMessengerCreateInfoEXT CreateInfo = MakeDebugUtilsMessengerCreateInfo();
+
+  vk_check(vkCreateDebugUtilsMessenger(Instance, &CreateInfo, nullptr, &DebugMessenger));
+
+}
+
+void FVulkanTriangle::ValidateLayers() {
   uint32_t vkLayerPropertiesCount = 0;
-  auto Result = vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, nullptr);
-  if (Result != VK_SUCCESS) { return EResult::FailedToGetVkLayers; }
+  vk_check(vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, nullptr));
 
   std::vector<VkLayerProperties> VkLayers(vkLayerPropertiesCount);
-  Result = vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, VkLayers.data());
-  if (Result != VK_SUCCESS) { return EResult::FailedToGetVkLayers; }
+  vk_check(vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, VkLayers.data()));
 
-  for (auto const NeededLayer : mValidationLayers) {
+  for (auto const NeededLayer : ValidationLayers) {
     bool Found = false;
     for (const auto &VkLayer : VkLayers) {
       if (strcmp(NeededLayer, VkLayer.layerName) == 0) {
@@ -315,12 +261,8 @@ EResult FVulkanTriangle::ValidateLayers() {
         break;
       }
     }
-    if (!Found) {
-      return EResult::VkLayerNotSupported;
-    }
+    fatal(!Found, "Required VK_LAYERS are not supported");
   }
-
-  return EResult::Success;
 }
 
 VkDebugUtilsMessengerCreateInfoEXT FVulkanTriangle::MakeDebugUtilsMessengerCreateInfo() {
@@ -336,84 +278,42 @@ VkDebugUtilsMessengerCreateInfoEXT FVulkanTriangle::MakeDebugUtilsMessengerCreat
   };
 }
 
-void FVulkanTriangle::DestroyVKInstance() {
-  if (mInstance != VK_NULL_HANDLE) { vkDestroyInstance(mInstance, nullptr); }
-  mInstance = VK_NULL_HANDLE;
+void FVulkanTriangle::DestroyDebugMessenger() {
+  if (DebugMessenger != VK_NULL_HANDLE) {
+    check(Instance != VK_NULL_HANDLE);
+    const auto vkDestroyDebugUtilsMessenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+      vkGetInstanceProcAddr(Instance, "vkDestroyDebugUtilsMessengerEXT"));
+    if (vkDestroyDebugUtilsMessenger != nullptr) {
+      vkDestroyDebugUtilsMessenger(Instance, DebugMessenger, nullptr);
+    }
+  }
+  DebugMessenger = VK_NULL_HANDLE;
 }
 
-EResult FVulkanTriangle::CreateSurface() {
-  if (glfwCreateWindowSurface(mInstance, mWindow, nullptr, &mSurface) != VK_SUCCESS) {
-    return EResult::FailedToCreateSurface;
-  }
-  return EResult::Success;
+void FVulkanTriangle::CreateSurface() {
+  fatal(glfwCreateWindowSurface(Instance, Window, nullptr, &Surface) != VK_SUCCESS, "Failed to create surface");
 }
 
 void FVulkanTriangle::DestroySurface() {
-  if (mSurface) {
-    vkDestroySurfaceKHR(mInstance, mSurface, nullptr);
-    mSurface = VK_NULL_HANDLE;
+  if (Surface != VK_NULL_HANDLE) {
+    check(Instance != VK_NULL_HANDLE);
+    vkDestroySurfaceKHR(Instance, Surface, nullptr);
+    Surface = VK_NULL_HANDLE;
   }
 }
 
-EResult FVulkanTriangle::CreateDebugMessenger() {
-
-  if (const auto Result = ValidateLayers(); Result != EResult::Success) { return Result; }
-
-  const auto vkCreateDebugUtilsMessenger = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
-    vkGetInstanceProcAddr(mInstance, "vkCreateDebugUtilsMessengerEXT"));
-  if (vkCreateDebugUtilsMessenger == nullptr) {
-    return EResult::FailedToCreateVkDebugMessenger;
-  }
-
-  const auto CreateInfo = MakeDebugUtilsMessengerCreateInfo();
-
-  const auto Result = vkCreateDebugUtilsMessenger(mInstance, &CreateInfo, nullptr, &mDebugMessenger);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToCreateVkDebugMessenger;
-  }
-  return EResult::Success;
-}
-
-void FVulkanTriangle::DestroyDebugMessenger() {
-  if (mDebugMessenger != VK_NULL_HANDLE) {
-    const auto vkDestroyDebugUtilsMessenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
-      vkGetInstanceProcAddr(mInstance, "vkDestroyDebugUtilsMessengerEXT"));
-    if (vkDestroyDebugUtilsMessenger != nullptr) {
-      vkDestroyDebugUtilsMessenger(mInstance, mDebugMessenger, nullptr);
-    }
-  }
-  mDebugMessenger = VK_NULL_HANDLE;
-}
-
-EResult FVulkanTriangle::CreatePhysicalDevice() {
+void FVulkanTriangle::CreatePhysicalDevice() {
+  check(Instance != VK_NULL_HANDLE);
   uint32_t PhysicalDevicesCount = 0;
-  auto Result = vkEnumeratePhysicalDevices(mInstance, &PhysicalDevicesCount, nullptr);
-  if (Result != VK_SUCCESS) {
-    if (PhysicalDevicesCount == 0) {
-      return EResult::NoVulkanGPUFound;
-    }
-    return EResult::FailedToEnumeratePhysicalDevices;
-  }
+  vk_check(vkEnumeratePhysicalDevices(Instance, &PhysicalDevicesCount, nullptr));
 
   std::vector<VkPhysicalDevice> PhysicalDevices(PhysicalDevicesCount);
-  Result = vkEnumeratePhysicalDevices(mInstance, &PhysicalDevicesCount, PhysicalDevices.data());
-  if (Result != VK_SUCCESS) {
-    if (PhysicalDevicesCount == 0) {
-      return EResult::NoVulkanGPUFound;
-    }
-    return EResult::FailedToEnumeratePhysicalDevices;
-  }
+  vk_check(vkEnumeratePhysicalDevices(Instance, &PhysicalDevicesCount, PhysicalDevices.data()));
 
-  auto PickedDeviceResult = PickPhysicalDevice(PhysicalDevices, mSurface);
-  if (!PickedDeviceResult) {
-    return PickedDeviceResult.error();
-  }
-  mPhysicalDevice = PickedDeviceResult.value();
-
-  return EResult::Success;
+  PhysicalDevice = PickPhysicalDevice(PhysicalDevices, Surface);
 }
 
-std::expected<VkPhysicalDevice, EResult> FVulkanTriangle::PickPhysicalDevice(
+VkPhysicalDevice FVulkanTriangle::PickPhysicalDevice(
   const std::vector<VkPhysicalDevice> &Devices, VkSurfaceKHR Surface) {
 
   std::multimap<int, VkPhysicalDevice> PhysicalDevicesRanked;
@@ -438,17 +338,19 @@ std::expected<VkPhysicalDevice, EResult> FVulkanTriangle::PickPhysicalDevice(
     std::vector<VkQueueFamilyProperties> QueueFamilies(QueueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(PhysicalDevice, &QueueFamilyCount, QueueFamilies.data());
 
-    if (!FindQueueFamilies(PhysicalDevice, Surface).isComplete()) {
+    if (!FindQueueFamilies(PhysicalDevice, Surface).IsComplete()) {
       continue;
     }
 
     uint32_t ExtensionCount = 0;
-    vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount, nullptr);
+    vk_check(vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount, nullptr));
     std::vector<VkExtensionProperties> AvailableExtensions(ExtensionCount);
-    vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount, AvailableExtensions.data());
+    vk_check(vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount,
+      AvailableExtensions.data()));
 
-    bool HasAllExtensions = true;
-    for (const char *Required : mDeviceExtensions) {
+
+    bool bHasAllExtensions = true;
+    for (const char *Required : DeviceExtensions) {
       bool Found = false;
       for (uint32_t i = 0; i < ExtensionCount; i++) {
         if (strcmp(AvailableExtensions[i].extensionName, Required) == 0) {
@@ -457,19 +359,19 @@ std::expected<VkPhysicalDevice, EResult> FVulkanTriangle::PickPhysicalDevice(
         }
       }
       if (!Found) {
-        HasAllExtensions = false;
+        bHasAllExtensions = false;
         break;
       }
     }
-    if (!HasAllExtensions) {
+    if (!bHasAllExtensions) {
       continue;
     }
 
     uint32_t FormatCount = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatCount, nullptr);
+    vk_check(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatCount, nullptr));
 
     uint32_t PresentModeCount = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModeCount, nullptr);
+    vk_check(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModeCount, nullptr));
 
     if (FormatCount == 0 || PresentModeCount == 0) {
       continue;
@@ -491,25 +393,80 @@ std::expected<VkPhysicalDevice, EResult> FVulkanTriangle::PickPhysicalDevice(
 
   }
 
-  if (PhysicalDevicesRanked.empty()) {
-    return std::unexpected(EResult::NoVulkanGPUFound);
-  }
+  fatal(PhysicalDevicesRanked.empty(), "Supported GPU device does not exist");
+  fatal(PhysicalDevicesRanked.rbegin()->first <= 0, "Supported GPU device does not exits");
 
-  if (PhysicalDevicesRanked.rbegin()->first > 0) {
-    return PhysicalDevicesRanked.rbegin()->second;
-  }
-  else {
-    return std::unexpected(EResult::NoVulkanGPUFound);
-  }
-
+  return PhysicalDevicesRanked.rbegin()->second;
 }
 
 void FVulkanTriangle::DestroyPhysicalDevice() {
-  mPhysicalDevice = VK_NULL_HANDLE;
+  PhysicalDevice = VK_NULL_HANDLE;
+}
+
+void FVulkanTriangle::CreateLogicalDevice() {
+  check(Instance != VK_NULL_HANDLE);
+  check(PhysicalDevice != VK_NULL_HANDLE);
+
+  const auto Indices = FindQueueFamilies(PhysicalDevice, Surface);
+
+  QueueFamilyIndices = Indices;
+
+  std::set<uint32_t> UniqueQueueFamilies = {
+    Indices.GraphicsFamily,
+    Indices.PresentFamily
+  };
+
+  float QueuePriority = 0.5f;
+  std::vector<VkDeviceQueueCreateInfo> QueueCreateInfos;
+  for (uint32_t QueueFamily : UniqueQueueFamilies) {
+    QueueCreateInfos.push_back({
+      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+      .queueFamilyIndex = QueueFamily,
+      .queueCount = 1,
+      .pQueuePriorities = &QueuePriority,
+    });
+  }
+
+  VkPhysicalDeviceFeatures2 Features2{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+    .pNext = nullptr,
+  };
+
+  VkPhysicalDeviceVulkan13Features Vulkan13Features = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    .pNext = nullptr,
+    .synchronization2 = VK_TRUE,
+    .dynamicRendering = VK_TRUE,
+  };
+
+  VkPhysicalDeviceExtendedDynamicStateFeaturesEXT DynamicStateFeatures = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+    .pNext = nullptr,
+  };
+
+  Features2.pNext = &Vulkan13Features;
+  Vulkan13Features.pNext = &DynamicStateFeatures;
+
+  VkDeviceCreateInfo DeviceCreateInfo = {
+    .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+    .pNext = &Features2,
+    .queueCreateInfoCount = static_cast<uint32_t>(QueueCreateInfos.size()),
+    .pQueueCreateInfos = QueueCreateInfos.data(),
+    .enabledExtensionCount = static_cast<uint32_t>(DeviceExtensions.size()),
+    .ppEnabledExtensionNames = DeviceExtensions.data(),
+  };
+
+  vk_check(vkCreateDevice(PhysicalDevice, &DeviceCreateInfo, nullptr, &Device));
+
+  vkGetDeviceQueue(Device, Indices.GraphicsFamily, 0, &GraphicsQueue);
+  vkGetDeviceQueue(Device, Indices.PresentFamily, 0, &PresentQueue);
 }
 
 FVulkanTriangle::FQueueFamilyIndices FVulkanTriangle::FindQueueFamilies(VkPhysicalDevice PhysicalDevice,
                                                                         VkSurfaceKHR Surface) {
+  check(PhysicalDevice != VK_NULL_HANDLE);
+  check(Surface != VK_NULL_HANDLE);
+
   FQueueFamilyIndices Indices;
 
   uint32_t QueueFamilyPropertiesCount = 0;
@@ -558,77 +515,80 @@ FVulkanTriangle::FQueueFamilyIndices FVulkanTriangle::FindQueueFamilies(VkPhysic
   return Indices;
 }
 
-EResult FVulkanTriangle::CreateLogicalDevice() {
-  const auto Indices = FindQueueFamilies(mPhysicalDevice, mSurface);
-  if (!Indices.isComplete()) {
-    return EResult::FailedToCreateVkDevice;
+void FVulkanTriangle::DestroyLogicalDevice() {
+  if (Device != VK_NULL_HANDLE) {
+    vkDestroyDevice(Device, nullptr);
+
+    PresentQueue = VK_NULL_HANDLE;
+    GraphicsQueue = VK_NULL_HANDLE;
+    Device = VK_NULL_HANDLE;
+    QueueFamilyIndices = FQueueFamilyIndices();
   }
-
-  mQueueFamilyIndices = Indices;
-
-  std::set<uint32_t> UniqueQueueFamilies = {
-    Indices.GraphicsFamily,
-    Indices.PresentFamily
-  };
-
-  float QueuePriority = 0.5f;
-  std::vector<VkDeviceQueueCreateInfo> QueueCreateInfos;
-  for (uint32_t QueueFamily : UniqueQueueFamilies) {
-    QueueCreateInfos.push_back({
-      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-      .queueFamilyIndex = QueueFamily,
-      .queueCount = 1,
-      .pQueuePriorities = &QueuePriority,
-    });
-  }
-
-  VkPhysicalDeviceFeatures2 Features2{
-    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-    .pNext = nullptr,
-  };
-
-  VkPhysicalDeviceVulkan13Features Vulkan13Features = {
-    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-    .pNext = nullptr,
-    .synchronization2 = VK_TRUE,
-    .dynamicRendering = VK_TRUE,
-  };
-
-  VkPhysicalDeviceExtendedDynamicStateFeaturesEXT DynamicStateFeatures = {
-    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
-    .pNext = nullptr,
-  };
-
-  Features2.pNext = &Vulkan13Features;
-  Vulkan13Features.pNext = &DynamicStateFeatures;
-
-  VkDeviceCreateInfo DeviceCreateInfo = {
-    .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-    .pNext = &Features2,
-    .queueCreateInfoCount = static_cast<uint32_t>(QueueCreateInfos.size()),
-    .pQueueCreateInfos = QueueCreateInfos.data(),
-    .enabledExtensionCount = static_cast<uint32_t>(mDeviceExtensions.size()),
-    .ppEnabledExtensionNames = mDeviceExtensions.data(),
-  };
-
-  auto Result = vkCreateDevice(mPhysicalDevice, &DeviceCreateInfo, nullptr, &mDevice);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToCreateVkDevice;
-  }
-
-  vkGetDeviceQueue(mDevice, Indices.GraphicsFamily, 0, &mGraphicsQueue);
-  vkGetDeviceQueue(mDevice, Indices.PresentFamily, 0, &mPresentQueue);
-
-  return EResult::Success;
 }
 
-void FVulkanTriangle::DestroyLogicalDevice() {
-  if (mDevice) {
-    vkDestroyDevice(mDevice, nullptr);
+void FVulkanTriangle::CreateSwapChain() {
+  check(PhysicalDevice != VK_NULL_HANDLE);
+  check(Device != VK_NULL_HANDLE);
+
+  VkSurfaceCapabilitiesKHR Capabilities;
+  vk_check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(PhysicalDevice, Surface, &Capabilities));
+
+  uint32_t FormatsCount = 0;
+  vk_check(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatsCount, nullptr));
+
+  std::vector<VkSurfaceFormatKHR> Formats(FormatsCount);
+  vk_check(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatsCount, Formats.data()));
+
+  uint32_t PresentModesCount = 0;
+  vk_check(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModesCount, nullptr));
+
+  std::vector<VkPresentModeKHR> PresentModes(PresentModesCount);
+  vk_check(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModesCount,
+    PresentModes.data()));
+
+  SwapChainSurfaceFormat = PickSwapChainSurfaceFormat(Formats);
+  SwapChainExtent = PickSwapChainExtent(Capabilities, Window);
+  const VkPresentModeKHR PresentMode = PickSwapChainPresentMode(PresentModes);
+
+  uint32_t ImageCount = Capabilities.minImageCount + 1;
+  if (Capabilities.maxImageCount > 0 && ImageCount > Capabilities.maxImageCount) {
+    ImageCount = Capabilities.maxImageCount;
   }
-  mPresentQueue = VK_NULL_HANDLE;
-  mGraphicsQueue = VK_NULL_HANDLE;
-  mDevice = VK_NULL_HANDLE;
+
+  VkSwapchainCreateInfoKHR SwapChainCreateInfo{
+    .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+    .flags = VkSwapchainCreateFlagsKHR(),
+    .surface = Surface,
+    .minImageCount = ImageCount,
+    .imageFormat = SwapChainSurfaceFormat.format,
+    .imageColorSpace = SwapChainSurfaceFormat.colorSpace,
+    .imageExtent = SwapChainExtent,
+    .imageArrayLayers = 1,
+    .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    .preTransform = Capabilities.currentTransform,
+    .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+    .presentMode = PresentMode,
+    .clipped = VK_TRUE,
+    .oldSwapchain = VK_NULL_HANDLE,
+  };
+
+  const std::array<uint32_t, 2> QueueFamilyIndicesArray = {QueueFamilyIndices.GraphicsFamily,
+                                                           QueueFamilyIndices.PresentFamily};
+
+  if (QueueFamilyIndicesArray[0] != QueueFamilyIndicesArray[1]) {
+    SwapChainCreateInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+    SwapChainCreateInfo.queueFamilyIndexCount = 2;
+    SwapChainCreateInfo.pQueueFamilyIndices = QueueFamilyIndicesArray.data();
+  }
+
+  vk_check(vkCreateSwapchainKHR(Device, &SwapChainCreateInfo, nullptr, &SwapChain));
+
+  uint32_t SwapChainImageCount = 0;
+  vk_check(vkGetSwapchainImagesKHR(Device, SwapChain, &SwapChainImageCount, nullptr));
+
+  SwapChainImages.resize(SwapChainImageCount);
+  vk_check(vkGetSwapchainImagesKHR(Device, SwapChain, &SwapChainImageCount, SwapChainImages.data()));
 }
 
 VkSurfaceFormatKHR FVulkanTriangle::PickSwapChainSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &Formats) {
@@ -652,6 +612,8 @@ VkPresentModeKHR FVulkanTriangle::PickSwapChainPresentMode(const std::vector<VkP
 }
 
 VkExtent2D FVulkanTriangle::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &Capabilities, GLFWwindow *Window) {
+  check(Window != nullptr);
+
   if (Capabilities.currentExtent.width != UINT32_MAX) {
     return Capabilities.currentExtent;
   }
@@ -663,10 +625,10 @@ VkExtent2D FVulkanTriangle::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &
   //
 
   // TODO: fixme
-  int Width = mWindowWidth;
-  int Height = mWindowHeight;
+  int Width = WindowWidth;
+  int Height = WindowHeight;
 
-    std::cout << "Framebuffer size: " << Width << "x" << Height << std::endl;
+  std::cout << "Framebuffer size: " << Width << "x" << Height << std::endl;
 
   return {
     .width = std::clamp<uint32_t>(Width, Capabilities.minImageExtent.width, Capabilities.maxImageExtent.width),
@@ -674,144 +636,52 @@ VkExtent2D FVulkanTriangle::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &
 
 }
 
-EResult FVulkanTriangle::CreateSwapChain() {
-  VkSurfaceCapabilitiesKHR Capabilities;
-  auto Result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(mPhysicalDevice, mSurface, &Capabilities);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToGetSurfaceCapabilities;
-  }
-
-  uint32_t FormatsCount = 0;
-  Result = vkGetPhysicalDeviceSurfaceFormatsKHR(mPhysicalDevice, mSurface, &FormatsCount, nullptr);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToGetSurfaceFormats;
-  }
-  std::vector<VkSurfaceFormatKHR> Formats(FormatsCount);
-  Result = vkGetPhysicalDeviceSurfaceFormatsKHR(mPhysicalDevice, mSurface, &FormatsCount, Formats.data());
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToGetSurfaceFormats;
-  }
-
-  uint32_t PresentModesCount = 0;
-  Result = vkGetPhysicalDeviceSurfacePresentModesKHR(mPhysicalDevice, mSurface, &PresentModesCount, nullptr);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToGetSurfacePresentModes;
-  }
-  std::vector<VkPresentModeKHR> PresentModes(PresentModesCount);
-  Result = vkGetPhysicalDeviceSurfacePresentModesKHR(mPhysicalDevice, mSurface, &PresentModesCount,
-                                                     PresentModes.data());
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToGetSurfacePresentModes;
-  }
-
-  mSwapChainSurfaceFormat = PickSwapChainSurfaceFormat(Formats);
-  mSwapChainExtent = PickSwapChainExtent(Capabilities, mWindow);
-  const auto PresentMode = PickSwapChainPresentMode(PresentModes);
-
-  auto ImageCount = Capabilities.minImageCount + 1;
-  if (Capabilities.maxImageCount > 0 && ImageCount > Capabilities.maxImageCount) {
-    ImageCount = Capabilities.maxImageCount;
-  }
-
-  VkSwapchainCreateInfoKHR SwapChainCreateInfo{
-    .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-    .flags = VkSwapchainCreateFlagsKHR(),
-    .surface = mSurface,
-    .minImageCount = ImageCount,
-    .imageFormat = mSwapChainSurfaceFormat.format,
-    .imageColorSpace = mSwapChainSurfaceFormat.colorSpace,
-    .imageExtent = mSwapChainExtent,
-    .imageArrayLayers = 1,
-    .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-    .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
-    .preTransform = Capabilities.currentTransform,
-    .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-    .presentMode = PresentMode,
-    .clipped = VK_TRUE,
-    .oldSwapchain = VK_NULL_HANDLE,
-  };
-
-  const uint32_t QueueFamilyIndices[] = {mQueueFamilyIndices.GraphicsFamily, mQueueFamilyIndices.PresentFamily};
-
-  if (QueueFamilyIndices[0] != QueueFamilyIndices[1]) {
-    SwapChainCreateInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-    SwapChainCreateInfo.queueFamilyIndexCount = 2;
-    SwapChainCreateInfo.pQueueFamilyIndices = QueueFamilyIndices;
-  }
-
-
-  Result = vkCreateSwapchainKHR(mDevice, &SwapChainCreateInfo, nullptr, &mSwapChain);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToCreateSwapChain;
-  }
-
-  uint32_t SwapChainImageCount = 0;
-  Result = vkGetSwapchainImagesKHR(mDevice, mSwapChain, &SwapChainImageCount, nullptr);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToGetSwapChainImages;
-  }
-  mSwapChainImages.resize(SwapChainImageCount);
-  Result = vkGetSwapchainImagesKHR(mDevice, mSwapChain, &SwapChainImageCount, mSwapChainImages.data());
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToGetSwapChainImages;
-  }
-
-  return EResult::Success;
-}
-
 void FVulkanTriangle::DestroySwapChain() {
-  if (mSwapChain != VK_NULL_HANDLE) {
-    mSwapChainImages.clear();
-    vkDestroySwapchainKHR(mDevice, mSwapChain, nullptr);
-    mSwapChain = VK_NULL_HANDLE;
-    mSwapChainImages.clear();
+  if (SwapChain != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroySwapchainKHR(Device, SwapChain, nullptr);
+    SwapChain = VK_NULL_HANDLE;
+    SwapChainImages.clear();
   }
 }
 
-EResult FVulkanTriangle::CreateImageViews() {
-  mSwapChainImageViews.clear();
+void FVulkanTriangle::CreateImageViews() {
+  check(Device != VK_NULL_HANDLE);
+  check(!SwapChainImages.empty());
+
+  SwapChainImageViews.clear();
 
 
-  for (const auto Image : mSwapChainImages) {
+  for (const auto Image : SwapChainImages) {
     const VkImageViewCreateInfo ImageViewCreateInfo = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
       .image = Image,
       .viewType = VK_IMAGE_VIEW_TYPE_2D,
-      .format = mSwapChainSurfaceFormat.format,
+      .format = SwapChainSurfaceFormat.format,
       .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
     };
 
     VkImageView ImageView = VK_NULL_HANDLE;
-    const auto Result = vkCreateImageView(mDevice, &ImageViewCreateInfo, nullptr, &ImageView);
-    if (Result != VK_SUCCESS) {
-      return EResult::FailedToCreateImageView;
-    }
-    mSwapChainImageViews.emplace_back(ImageView);
-
+    vk_check(vkCreateImageView(Device, &ImageViewCreateInfo, nullptr, &ImageView));
+    SwapChainImageViews.emplace_back(ImageView);
   }
-
-
-  return EResult::Success;
 }
 
 void FVulkanTriangle::DestroyImageViews() {
-  for (const auto ImageView : mSwapChainImageViews) {
-    vkDestroyImageView(mDevice, ImageView, nullptr);
+  for (const auto ImageView : SwapChainImageViews) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyImageView(Device, ImageView, nullptr);
   }
-  mSwapChainImageViews.clear();
+  SwapChainImageViews.clear();
 }
 
-EResult FVulkanTriangle::CreateGraphicsPipeline() {
+void FVulkanTriangle::CreateGraphicsPipeline() {
+  check(Device != VK_NULL_HANDLE);
   const auto ShaderCode = ReadFile("../shaders/slang.spv");
-  if (ShaderCode.empty()) {
-    return EResult::FailedToReadShadersFromFile;
-  }
+  checkf(!ShaderCode.empty(), "Loaded empty shader");
 
-  const auto ShaderModuleResult = CreateShaderModule(ShaderCode);
-  if (!ShaderModuleResult) {
-    return ShaderModuleResult.error();
-  }
-  const auto ShaderModule = ShaderModuleResult.value();
+  const VkShaderModule ShaderModule = CreateShaderModule(ShaderCode);
+  check(ShaderModule != VK_NULL_HANDLE);
 
   const VkPipelineShaderStageCreateInfo VertShaderStageCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -851,7 +721,7 @@ EResult FVulkanTriangle::CreateGraphicsPipeline() {
     .pDynamicStates = DynamicStates.data(),
   };
 
-  constexpr VkPipelineViewportStateCreateInfo ViewportStateCreateInfo = {
+  const VkPipelineViewportStateCreateInfo ViewportStateCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
     .viewportCount = 1,
     .scissorCount = 1,
@@ -896,15 +766,12 @@ EResult FVulkanTriangle::CreateGraphicsPipeline() {
     .pushConstantRangeCount = 0,
   };
 
-  auto Result = vkCreatePipelineLayout(mDevice, &LayoutCreateInfo, nullptr, &mPipelineLayout);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToCreatePipelineLayout;
-  }
+  vk_check(vkCreatePipelineLayout(Device, &LayoutCreateInfo, nullptr, &PipelineLayout));
 
   const VkPipelineRenderingCreateInfo RenderingCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
     .colorAttachmentCount = 1,
-    .pColorAttachmentFormats = &mSwapChainSurfaceFormat.format,
+    .pColorAttachmentFormats = &SwapChainSurfaceFormat.format,
   };
 
   const VkGraphicsPipelineCreateInfo GraphicsPipelineCreateInfo = {
@@ -919,32 +786,18 @@ EResult FVulkanTriangle::CreateGraphicsPipeline() {
     .pMultisampleState = &MultisampleStateCreateInfo,
     .pColorBlendState = &ColorBlendStateCreateInfo,
     .pDynamicState = &DynamicStateCreateInfo,
-    .layout = mPipelineLayout,
+    .layout = PipelineLayout,
     .renderPass = nullptr,
   };
 
-  Result = vkCreateGraphicsPipelines(mDevice, VK_NULL_HANDLE, 1, &GraphicsPipelineCreateInfo, nullptr,
-                                     &mGraphicsPipeline);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToCreateGraphicsPipeline;
-  }
+  vk_check(vkCreateGraphicsPipelines(Device, VK_NULL_HANDLE, 1, &GraphicsPipelineCreateInfo, nullptr,
+    &GraphicsPipeline));
 
   DestroyShaderModule(ShaderModule);
-  return EResult::Success;
 }
 
-void FVulkanTriangle::DestroyGraphicsPipeline() {
-  if (mPipelineLayout != VK_NULL_HANDLE) {
-    vkDestroyPipelineLayout(mDevice, mPipelineLayout, nullptr);
-    mPipelineLayout = VK_NULL_HANDLE;
-  }
-  if (mGraphicsPipeline != VK_NULL_HANDLE) {
-    vkDestroyPipeline(mDevice, mGraphicsPipeline, nullptr);
-    mGraphicsPipeline = VK_NULL_HANDLE;
-  }
-}
-
-std::expected<VkShaderModule, EResult> FVulkanTriangle::CreateShaderModule(const std::vector<char> &ShaderCode) const {
+VkShaderModule FVulkanTriangle::CreateShaderModule(const std::vector<char> &ShaderCode) const {
+  check(Device != VK_NULL_HANDLE);
   const VkShaderModuleCreateInfo ShaderModuleCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
     .codeSize = ShaderCode.size(),
@@ -952,74 +805,69 @@ std::expected<VkShaderModule, EResult> FVulkanTriangle::CreateShaderModule(const
   };
 
   VkShaderModule ShaderModule = VK_NULL_HANDLE;
-  const auto Result = vkCreateShaderModule(mDevice, &ShaderModuleCreateInfo, nullptr, &ShaderModule);
-  if (Result != VK_SUCCESS) {
-    return std::unexpected(EResult::FailedToCreateShaderModule);
-  }
-
+  vk_check(vkCreateShaderModule(Device, &ShaderModuleCreateInfo, nullptr, &ShaderModule));
   return ShaderModule;
 }
 
 void FVulkanTriangle::DestroyShaderModule(VkShaderModule ShaderModule) const {
-  vkDestroyShaderModule(mDevice, ShaderModule, nullptr);
+  if (ShaderModule != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyShaderModule(Device, ShaderModule, nullptr);
+  }
 }
 
-EResult FVulkanTriangle::CreateCommandPool() {
+void FVulkanTriangle::DestroyGraphicsPipeline() {
+  if (PipelineLayout != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyPipelineLayout(Device, PipelineLayout, nullptr);
+    PipelineLayout = VK_NULL_HANDLE;
+  }
+  if (GraphicsPipeline != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyPipeline(Device, GraphicsPipeline, nullptr);
+    GraphicsPipeline = VK_NULL_HANDLE;
+  }
+}
+
+void FVulkanTriangle::CreateCommandPool() {
   const VkCommandPoolCreateInfo CommandPoolCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
     .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-    .queueFamilyIndex = mQueueFamilyIndices.GraphicsFamily,
+    .queueFamilyIndex = QueueFamilyIndices.GraphicsFamily,
   };
 
-  const auto Result = vkCreateCommandPool(mDevice, &CommandPoolCreateInfo, nullptr, &mCommandPool);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToCreateCommandPool;
-  }
-
-  return EResult::Success;
+  vk_check(vkCreateCommandPool(Device, &CommandPoolCreateInfo, nullptr, &CommandPool));
 }
 
 void FVulkanTriangle::DestroyCommandPool() {
-  if (mCommandPool != VK_NULL_HANDLE) {
-    vkDestroyCommandPool(mDevice, mCommandPool, nullptr);
-    mCommandPool = VK_NULL_HANDLE;
+  if (CommandPool != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyCommandPool(Device, CommandPool, nullptr);
+    CommandPool = VK_NULL_HANDLE;
   }
 }
 
-EResult FVulkanTriangle::CreateCommandBuffer() {
+void FVulkanTriangle::CreateCommandBuffer() {
 
   const VkCommandBufferAllocateInfo CommandBufferAllocateInfo = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-    .commandPool = mCommandPool,
+    .commandPool = CommandPool,
     .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
     .commandBufferCount = 1,
   };
 
-  const auto Result = vkAllocateCommandBuffers(mDevice, &CommandBufferAllocateInfo, &mCommandBuffer);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToAllocateCommandBuffers;
-  }
-
-  return EResult::Success;
+  vk_check(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, &CommandBuffer));
 }
 
-void FVulkanTriangle::DestroyCommandBuffer() {
-  if (mCommandBuffer != VK_NULL_HANDLE) {
-    vkFreeCommandBuffers(mDevice, mCommandPool, 1, &mCommandBuffer);
-    mCommandBuffer = VK_NULL_HANDLE;
-  }
-}
-
-EResult FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
+void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
+  check(CommandBuffer != VK_NULL_HANDLE);
+  check(GraphicsPipeline != VK_NULL_HANDLE);
 
   constexpr VkCommandBufferBeginInfo BeginInfo = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
   };
 
-  auto Result = vkBeginCommandBuffer(mCommandBuffer, &BeginInfo);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToBeginCommandBuffer;
-  }
+  vk_check(vkBeginCommandBuffer(CommandBuffer, &BeginInfo));
 
   TransitionImageLayout(
     ImageIndex,
@@ -1030,11 +878,11 @@ EResult FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
 
-  constexpr auto ClearColor = VkClearColorValue{0.0f, 0.0f, 0.0f, 1.0f};
+  constexpr VkClearColorValue ClearColor{0.0f, 0.0f, 0.0f, 1.0f};
 
   const VkRenderingAttachmentInfo RenderingAttachmentInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .imageView = mSwapChainImageViews[ImageIndex],
+    .imageView = SwapChainImageViews[ImageIndex],
     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -1043,36 +891,36 @@ EResult FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
 
   const VkRenderingInfo RenderingInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-    .renderArea = {.offset = {0, 0}, .extent = mSwapChainExtent},
+    .renderArea = {.offset = {0, 0}, .extent = SwapChainExtent},
     .layerCount = 1,
     .colorAttachmentCount = 1,
     .pColorAttachments = &RenderingAttachmentInfo,
   };
 
-  vkCmdBeginRendering(mCommandBuffer, &RenderingInfo);
+  vkCmdBeginRendering(CommandBuffer, &RenderingInfo);
 
-  vkCmdBindPipeline(mCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mGraphicsPipeline);
+  vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline);
 
   const VkViewport Viewport = {
     .x = 0.0f,
     .y = 0.0f,
-    .width = static_cast<float>(mSwapChainExtent.width),
-    .height = static_cast<float>(mSwapChainExtent.height),
+    .width = static_cast<float>(SwapChainExtent.width),
+    .height = static_cast<float>(SwapChainExtent.height),
     .minDepth = 0.0f,
     .maxDepth = 1.0f,
   };
 
   const VkRect2D Scissor = {
     .offset = {0, 0},
-    .extent = mSwapChainExtent,
+    .extent = SwapChainExtent,
   };
 
-  vkCmdSetViewport(mCommandBuffer, 0, 1, &Viewport);
-  vkCmdSetScissor(mCommandBuffer, 0, 1, &Scissor);
+  vkCmdSetViewport(CommandBuffer, 0, 1, &Viewport);
+  vkCmdSetScissor(CommandBuffer, 0, 1, &Scissor);
 
-  vkCmdDraw(mCommandBuffer, 3, 1, 0, 0);
+  vkCmdDraw(CommandBuffer, 3, 1, 0, 0);
 
-  vkCmdEndRendering(mCommandBuffer);
+  vkCmdEndRendering(CommandBuffer);
 
   TransitionImageLayout(
     ImageIndex,
@@ -1084,14 +932,16 @@ EResult FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT
     );
 
-  Result = vkEndCommandBuffer(mCommandBuffer);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToEndCommandBuffer;
-  }
-
-  return EResult::Success;
+  vk_check(vkEndCommandBuffer(CommandBuffer));
 }
 
+void FVulkanTriangle::DestroyCommandBuffer() {
+  if (CommandBuffer != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkFreeCommandBuffers(Device, CommandPool, 1, &CommandBuffer);
+    CommandBuffer = VK_NULL_HANDLE;
+  }
+}
 
 void FVulkanTriangle::TransitionImageLayout(uint32_t ImageIndex, VkImageLayout OldLayout, VkImageLayout NewLayout,
                                             VkAccessFlags2 SrcAccessMask, VkAccessFlags2 DstAccessMask,
@@ -1107,7 +957,7 @@ void FVulkanTriangle::TransitionImageLayout(uint32_t ImageIndex, VkImageLayout O
     .newLayout = NewLayout,
     .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
     .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-    .image = mSwapChainImages[ImageIndex],
+    .image = SwapChainImages[ImageIndex],
     .subresourceRange = {
       .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
       .baseMipLevel = 0,
@@ -1124,71 +974,13 @@ void FVulkanTriangle::TransitionImageLayout(uint32_t ImageIndex, VkImageLayout O
     .pImageMemoryBarriers = &Barrier,
   };
 
-  vkCmdPipelineBarrier2(mCommandBuffer, &DependencyInfo);
+  vkCmdPipelineBarrier2(CommandBuffer, &DependencyInfo);
 }
 
-EResult FVulkanTriangle::DrawFrame() {
-  auto VKResult = vkWaitForFences(mDevice, 1, &mDrawFence,VK_TRUE, UINT64_MAX);
-  if (VKResult != VK_SUCCESS) {
-    return EResult::FailedToWaitForFence;
-  }
+void FVulkanTriangle::CreateSyncObjects() {
+  check(SwapChainImages.size() != 0);
+  check(Device != VK_NULL_HANDLE);
 
-  uint32_t ImageIndex = 0;
-  VKResult = vkAcquireNextImageKHR(mDevice, mSwapChain, UINT64_MAX, mPresentCompleteSemaphore, VK_NULL_HANDLE,
-                                   &ImageIndex);
-  if (VKResult != VK_SUCCESS) {
-    return EResult::FailedToAcquireNextImage;
-  }
-
-  const auto Result = RecordCommandBuffer(ImageIndex);
-  if (Result != EResult::Success) {
-    return Result;
-  }
-
-  VKResult = vkResetFences(mDevice, 1, &mDrawFence);
-  if (VKResult != VK_SUCCESS) {
-    return EResult::FailedToResetFence;
-  }
-
-
-  constexpr VkPipelineStageFlags WaitDstStorageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;;
-
-
-  const VkSubmitInfo SubmitInfo = {
-    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-    .waitSemaphoreCount = 1,
-    .pWaitSemaphores = &mPresentCompleteSemaphore,
-    .pWaitDstStageMask = &WaitDstStorageMask,
-    .commandBufferCount = 1,
-    .pCommandBuffers = &mCommandBuffer,
-    .signalSemaphoreCount = 1,
-    .pSignalSemaphores = &mRenderCompleteSemaphores[ImageIndex],
-  };
-
-
-  VKResult = vkQueueSubmit(mGraphicsQueue, 1, &SubmitInfo, mDrawFence);
-  if (VKResult != VK_SUCCESS) {
-    return EResult::FailedToSubmitToQueue;
-  }
-
-  const VkPresentInfoKHR PresentInfo = {
-    .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-    .waitSemaphoreCount = 1,
-    .pWaitSemaphores = &mRenderCompleteSemaphores[ImageIndex],
-    .swapchainCount = 1,
-    .pSwapchains = &mSwapChain,
-    .pImageIndices = &ImageIndex,
-  };
-
-  VKResult = vkQueuePresentKHR(mGraphicsQueue, &PresentInfo);
-  if (VKResult != VK_SUCCESS) {
-    return EResult::FailedToPresentQueue;
-  }
-
-  return EResult::Success;
-}
-
-EResult FVulkanTriangle::CreateSyncObjects() {
   constexpr VkSemaphoreCreateInfo SemaphoreCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
   };
@@ -1198,39 +990,84 @@ EResult FVulkanTriangle::CreateSyncObjects() {
   };
 
 
-  mRenderCompleteSemaphores.resize(mSwapChainImages.size());
-  for (auto &Semaphore : mRenderCompleteSemaphores) {
-    const auto Result = vkCreateSemaphore(mDevice, &SemaphoreCreateInfo, nullptr, &Semaphore);
-    if (Result != VK_SUCCESS) {
-      return EResult::FailedToCreateSemaphore;
-    }
+  RenderCompleteSemaphores.resize(SwapChainImages.size());
+  for (auto &Semaphore : RenderCompleteSemaphores) {
+    vk_check(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &Semaphore));
   }
+  vk_check(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &PresentCompleteSemaphore));
 
-  auto Result = vkCreateSemaphore(mDevice, &SemaphoreCreateInfo, nullptr, &mPresentCompleteSemaphore);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToCreateSemaphore;
-  }
-
-
-  Result = vkCreateFence(mDevice, &FenceCreateInfo, nullptr, &mDrawFence);
-  if (Result != VK_SUCCESS) {
-    return EResult::FailedToCreateFence;
-  }
-
-  return EResult::Success;
+  vk_check(vkCreateFence(Device, &FenceCreateInfo, nullptr, &DrawFence));
 }
 
 void FVulkanTriangle::DestroySyncObjects() {
-
-  for (const auto Semaphore : mRenderCompleteSemaphores) {
-    vkDestroySemaphore(mDevice, Semaphore, nullptr);
+  for (const auto Semaphore : RenderCompleteSemaphores) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroySemaphore(Device, Semaphore, nullptr);
   }
 
-  vkDestroySemaphore(mDevice, mPresentCompleteSemaphore, nullptr);
-
-
-  if (mDrawFence != VK_NULL_HANDLE) {
-    vkDestroyFence(mDevice, mDrawFence, nullptr);
-    mDrawFence = VK_NULL_HANDLE;
+  if (PresentCompleteSemaphore != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroySemaphore(Device, PresentCompleteSemaphore, nullptr);
   }
+
+  if (DrawFence != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyFence(Device, DrawFence, nullptr);
+    DrawFence = VK_NULL_HANDLE;
+  }
+}
+
+EResult FVulkanTriangle::DrawFrame() {
+  check(Device != VK_NULL_HANDLE);
+  check(DrawFence != VK_NULL_HANDLE);
+  check(PresentCompleteSemaphore != VK_NULL_HANDLE);
+  for (const auto Semaphore : RenderCompleteSemaphores) {
+    check(Semaphore != VK_NULL_HANDLE);
+  }
+  check(SwapChain != VK_NULL_HANDLE);
+
+  vk_check(vkWaitForFences(Device, 1, &DrawFence,VK_TRUE, UINT64_MAX));
+
+  uint32_t ImageIndex = 0;
+  const VkResult AcquireResult = vkAcquireNextImageKHR(Device, SwapChain, UINT64_MAX, PresentCompleteSemaphore,
+                                                       VK_NULL_HANDLE, &ImageIndex);
+  if (AcquireResult == VK_ERROR_OUT_OF_DATE_KHR) { return EResult::SwapChainOutOfDate; }
+  if (AcquireResult == VK_SUBOPTIMAL_KHR) { return EResult::SwapChainSuboptimal; }
+  vk_check(AcquireResult);
+
+  RecordCommandBuffer(ImageIndex);
+
+  vk_check(vkResetFences(Device, 1, &DrawFence));
+
+  constexpr VkPipelineStageFlags WaitDstStorageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;;
+
+  const VkSubmitInfo SubmitInfo = {
+    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores = &PresentCompleteSemaphore,
+    .pWaitDstStageMask = &WaitDstStorageMask,
+    .commandBufferCount = 1,
+    .pCommandBuffers = &CommandBuffer,
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores = &RenderCompleteSemaphores[ImageIndex],
+  };
+
+
+  vk_check(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, DrawFence));
+
+  const VkPresentInfoKHR PresentInfo = {
+    .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores = &RenderCompleteSemaphores[ImageIndex],
+    .swapchainCount = 1,
+    .pSwapchains = &SwapChain,
+    .pImageIndices = &ImageIndex,
+  };
+
+  const VkResult PresentResult = vkQueuePresentKHR(GraphicsQueue, &PresentInfo);
+  if (PresentResult == VK_ERROR_OUT_OF_DATE_KHR) { return EResult::SwapChainOutOfDate; }
+  if (PresentResult == VK_SUBOPTIMAL_KHR)         { return EResult::SwapChainSuboptimal; }
+  vk_check(PresentResult);
+
+  return EResult::Success;
 }
