@@ -1,18 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
 project(vulkan LANGUAGES CXX)
 
-function (add_slang_shader_target TARGET)
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        Debug Release RelWithDebInfo MinSizeRel)
+
+function(add_slang_shader_target TARGET)
     cmake_parse_arguments(SHADER "" "" "SOURCES" ${ARGN})
     set(SHADERS_DIR ${CMAKE_CURRENT_LIST_DIR}/shaders)
     set(OUTPUT_SPV ${SHADERS_DIR}/slang.spv)
-
     if(NOT DEFINED SLANGC_EXECUTABLE)
         find_program(SLANGC_EXECUTABLE NAMES slangc)
         if(NOT SLANGC_EXECUTABLE)
             message(FATAL_ERROR "Slang compiler not found!")
         endif()
     endif()
-
     add_custom_command(
             OUTPUT ${OUTPUT_SPV}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
@@ -28,43 +32,80 @@ function (add_slang_shader_target TARGET)
             COMMENT "Compiling Slang shaders"
             VERBATIM
     )
-
     add_custom_target(${TARGET} DEPENDS ${OUTPUT_SPV})
 endfunction()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
 
-add_slang_shader_target(shaders SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/shader.slang)
+add_slang_shader_target(shaders
+        SOURCES ${CMAKE_CURRENT_LIST_DIR}/shaders/shader.slang)
 
-add_executable(vulkan src/main.cpp
+add_executable(vulkan
+        src/main.cpp
         src/FVulkanTriangle.cpp
         src/FVulkanTriangle.h
         src/EResult.h
 )
 
+set_target_properties(vulkan PROPERTIES
+        UNITY_BUILD ON
+)
+
 add_dependencies(vulkan shaders)
 
-target_compile_definitions(vulkan PRIVATE
-        VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
-        VULKAN_HPP_NO_STRUCT_CONSTRUCTORS=1
+target_compile_options(vulkan PRIVATE
+        -fno-exceptions
+        -fno-rtti
+        -Wall
+        -Wextra
+        -Wpedantic
+
+        $<$<CONFIG:Debug>:
+        -O0
+        -g3
+        >
+
+        $<$<CONFIG:Release>:
+        -O3
+        -march=native
+        -flto=auto
+        -fomit-frame-pointer
+        -DNDEBUG
+        >
+
+        $<$<CONFIG:RelWithDebInfo>:
+        -O2
+        -g
+        -fno-omit-frame-pointer
+        -flto=auto
+        -DNDEBUG
+        >
+)
+
+target_link_options(vulkan PRIVATE
+        $<$<CONFIG:Release>:
+        -flto=auto
+        -Wl,-O1
+        -Wl,--as-needed
+        -Wl,-s
+        >
+        $<$<CONFIG:RelWithDebInfo>:
+        -flto=auto
+        -Wl,-O1
+        -Wl,--as-needed
+        >
 )
 
 target_include_directories(vulkan PRIVATE
-        "src"
+        src
 )
 
-add_custom_target(run_asan
-        COMMAND ${CMAKE_COMMAND} -E env
-        ASAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/asan.supp
-        $<TARGET_FILE:vulkan>
-        DEPENDS vulkan
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-)
 
 target_link_libraries(vulkan PRIVATE
         Vulkan::Vulkan
