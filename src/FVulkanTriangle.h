@@ -66,8 +66,10 @@ private:
   void CreateSwapChain();
   static VkSurfaceFormatKHR PickSwapChainSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &Formats);
   static VkPresentModeKHR PickSwapChainPresentMode(const std::vector<VkPresentModeKHR> &PresentModes);
-  VkExtent2D PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &Capabilities, GLFWwindow *Window);
+  static VkExtent2D PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &Capabilities, GLFWwindow *Window);
   void DestroySwapChain();
+
+  void RecreateSwapChain();
 
   void CreateImageViews();
   void DestroyImageViews();
@@ -80,9 +82,9 @@ private:
   void CreateCommandPool();
   void DestroyCommandPool();
 
-  void CreateCommandBuffer();
+  void CreateCommandBuffers();
   void RecordCommandBuffer(uint32_t ImageIndex) const;
-  void DestroyCommandBuffer();
+  void DestroyCommandBuffers();
 
   void TransitionImageLayout(
     uint32_t ImageIndex,
@@ -98,6 +100,8 @@ private:
 
   EResult DrawFrame();
 
+  static void GLFWFramebufferResizeCallback(GLFWwindow *window, int Width, int Height);
+
 private:
   static constexpr std::array<const char *, 1> ValidationLayers{
     "VK_LAYER_KHRONOS_validation"
@@ -106,6 +110,8 @@ private:
   static constexpr std::array<const char *, 2> DeviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME
   };
+
+  static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
 #ifdef NDEBUG
   static constexpr bool EnableValidationLayers = false;
@@ -140,11 +146,14 @@ private:
   VkPipeline GraphicsPipeline = VK_NULL_HANDLE;
 
   VkCommandPool CommandPool = VK_NULL_HANDLE;
-  VkCommandBuffer CommandBuffer = VK_NULL_HANDLE;
+  std::vector<VkCommandBuffer> CommandBuffers{};
 
-  VkSemaphore PresentCompleteSemaphore = VK_NULL_HANDLE;
+  std::vector<VkSemaphore> PresentCompleteSemaphores{};
   std::vector<VkSemaphore> RenderCompleteSemaphores{};
-  VkFence DrawFence = VK_NULL_HANDLE;
+  std::vector<VkFence> InFlightFences{};
 
   FQueueFamilyIndices QueueFamilyIndices{};
+
+  uint32_t FrameIndex = 0;
+  bool bFramebufferResized = false;
 };

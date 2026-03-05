@@ -2,7 +2,7 @@
 
 #include <string>
 
-enum class EResult : uint8_t {
+enum class EResult {
   Success,
   SwapChainOutOfDate,
   SwapChainSuboptimal,

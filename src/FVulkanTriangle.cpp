@@ -121,6 +121,9 @@ void FVulkanTriangle::InitWindow() {
   Window = glfwCreateWindow(WindowWidth, WindowHeight,
                             ApplicationName.c_str(), nullptr, nullptr);
   fatal(Window == nullptr, "Failed to create GLFW window");
+
+  glfwSetWindowUserPointer(Window, this);
+  glfwSetFramebufferSizeCallback(Window, GLFWFramebufferResizeCallback);
 }
 
 void FVulkanTriangle::DeinitWindow() {
@@ -143,14 +146,14 @@ void FVulkanTriangle::InitVulkan() {
   CreateImageViews();
   CreateGraphicsPipeline();
   CreateCommandPool();
-  CreateCommandBuffer();
+  CreateCommandBuffers();
   CreateSyncObjects();
 
 }
 
 void FVulkanTriangle::DeinitVulkan() {
   DestroySyncObjects();
-  DestroyCommandBuffer();
+  DestroyCommandBuffers();
   DestroyCommandPool();
   DestroyGraphicsPipeline();
   DestroyImageViews();
@@ -178,19 +181,21 @@ void FVulkanTriangle::CreateInstance() {
 
   const VkDebugUtilsMessengerCreateInfoEXT DebugCreateInfo = MakeDebugUtilsMessengerCreateInfo();
 
-  const VkInstanceCreateInfo CreateInfo = {
+  VkInstanceCreateInfo CreateInfo = {
     .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-    .pNext = EnableValidationLayers ? &DebugCreateInfo : nullptr,
+    .pNext = nullptr,
     .pApplicationInfo = &AppInfo,
-    .enabledLayerCount = EnableValidationLayers
-    ? static_cast<uint32_t>(ValidationLayers.size())
-    : 0,
-    .ppEnabledLayerNames = EnableValidationLayers
-    ? ValidationLayers.data()
-    : nullptr,
+    .enabledLayerCount = 0,
+    .ppEnabledLayerNames = nullptr,
     .enabledExtensionCount = static_cast<uint32_t>(Extensions.size()),
     .ppEnabledExtensionNames = Extensions.data(),
-  };
+};
+
+  if constexpr (EnableValidationLayers) {
+    CreateInfo.pNext = &DebugCreateInfo;
+    CreateInfo.enabledLayerCount = static_cast<uint32_t>(ValidationLayers.size());
+    CreateInfo.ppEnabledLayerNames = ValidationLayers.data();
+  }
 
   vk_check(vkCreateInstance(&CreateInfo, nullptr, &Instance));
 }
@@ -618,15 +623,11 @@ VkExtent2D FVulkanTriangle::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &
     return Capabilities.currentExtent;
   }
 
-  // int Width = 0;
-  // int Height = 0;
-  //
-  // glfwGetFramebufferSize(Window, &Width, &Height);
-  //
+  int Width = 0;
+  int Height = 0;
 
-  // TODO: fixme
-  int Width = WindowWidth;
-  int Height = WindowHeight;
+  glfwGetFramebufferSize(Window, &Width, &Height);
+
 
   std::cout << "Framebuffer size: " << Width << "x" << Height << std::endl;
 
@@ -643,6 +644,25 @@ void FVulkanTriangle::DestroySwapChain() {
     SwapChain = VK_NULL_HANDLE;
     SwapChainImages.clear();
   }
+}
+
+void FVulkanTriangle::RecreateSwapChain() {
+  check(Device != VK_NULL_HANDLE);
+  vk_check(vkDeviceWaitIdle(Device));
+  int Width = 0, Height = 0;
+  glfwGetFramebufferSize(Window, &Width, &Height);
+
+  while (Width == 0 || Height == 0) {
+    glfwGetFramebufferSize(Window, &Width, &Height);
+    glfwWaitEvents();
+  }
+
+  DestroyImageViews();
+  DestroySwapChain();
+
+  CreateSwapChain();
+  CreateImageViews();
+  bFramebufferResized = false;
 }
 
 void FVulkanTriangle::CreateImageViews() {
@@ -680,7 +700,7 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
   const auto ShaderCode = ReadFile("../shaders/slang.spv");
   checkf(!ShaderCode.empty(), "Loaded empty shader");
 
-  const VkShaderModule ShaderModule = CreateShaderModule(ShaderCode);
+  VkShaderModule ShaderModule = CreateShaderModule(ShaderCode);
   check(ShaderModule != VK_NULL_HANDLE);
 
   const VkPipelineShaderStageCreateInfo VertShaderStageCreateInfo = {
@@ -847,27 +867,32 @@ void FVulkanTriangle::DestroyCommandPool() {
   }
 }
 
-void FVulkanTriangle::CreateCommandBuffer() {
+void FVulkanTriangle::CreateCommandBuffers() {
+  check(Device != VK_NULL_HANDLE);
+
+  CommandBuffers.clear();
+  CommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
 
   const VkCommandBufferAllocateInfo CommandBufferAllocateInfo = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
     .commandPool = CommandPool,
     .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-    .commandBufferCount = 1,
+    .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
   };
 
-  vk_check(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, &CommandBuffer));
+  vk_check(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, CommandBuffers.data()));
 }
 
 void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
-  check(CommandBuffer != VK_NULL_HANDLE);
+  check(!CommandBuffers.empty());
+  check(CommandBuffers[FrameIndex] != VK_NULL_HANDLE);
   check(GraphicsPipeline != VK_NULL_HANDLE);
 
   constexpr VkCommandBufferBeginInfo BeginInfo = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
   };
 
-  vk_check(vkBeginCommandBuffer(CommandBuffer, &BeginInfo));
+  vk_check(vkBeginCommandBuffer(CommandBuffers[FrameIndex], &BeginInfo));
 
   TransitionImageLayout(
     ImageIndex,
@@ -878,7 +903,7 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
 
-  constexpr VkClearColorValue ClearColor{0.0f, 0.0f, 0.0f, 1.0f};
+  constexpr VkClearColorValue ClearColor{.float32 = {0.0f, 0.0f, 0.0f, 1.0f}};
 
   const VkRenderingAttachmentInfo RenderingAttachmentInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -897,9 +922,9 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     .pColorAttachments = &RenderingAttachmentInfo,
   };
 
-  vkCmdBeginRendering(CommandBuffer, &RenderingInfo);
+  vkCmdBeginRendering(CommandBuffers[FrameIndex], &RenderingInfo);
 
-  vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline);
+  vkCmdBindPipeline(CommandBuffers[FrameIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline);
 
   const VkViewport Viewport = {
     .x = 0.0f,
@@ -915,12 +940,12 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     .extent = SwapChainExtent,
   };
 
-  vkCmdSetViewport(CommandBuffer, 0, 1, &Viewport);
-  vkCmdSetScissor(CommandBuffer, 0, 1, &Scissor);
+  vkCmdSetViewport(CommandBuffers[FrameIndex], 0, 1, &Viewport);
+  vkCmdSetScissor(CommandBuffers[FrameIndex], 0, 1, &Scissor);
 
-  vkCmdDraw(CommandBuffer, 3, 1, 0, 0);
+  vkCmdDraw(CommandBuffers[FrameIndex], 3, 1, 0, 0);
 
-  vkCmdEndRendering(CommandBuffer);
+  vkCmdEndRendering(CommandBuffers[FrameIndex]);
 
   TransitionImageLayout(
     ImageIndex,
@@ -932,16 +957,16 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT
     );
 
-  vk_check(vkEndCommandBuffer(CommandBuffer));
+  vk_check(vkEndCommandBuffer(CommandBuffers[FrameIndex]));
 }
 
-void FVulkanTriangle::DestroyCommandBuffer() {
-  if (CommandBuffer != VK_NULL_HANDLE) {
-    check(Device != VK_NULL_HANDLE);
-    vkFreeCommandBuffers(Device, CommandPool, 1, &CommandBuffer);
-    CommandBuffer = VK_NULL_HANDLE;
-  }
+void FVulkanTriangle::DestroyCommandBuffers() {
+  check(CommandBuffers.size() == MAX_FRAMES_IN_FLIGHT);
+  check(Device != VK_NULL_HANDLE);
+  vkFreeCommandBuffers(Device, CommandPool, MAX_FRAMES_IN_FLIGHT, CommandBuffers.data());
+  CommandBuffers.clear();
 }
+
 
 void FVulkanTriangle::TransitionImageLayout(uint32_t ImageIndex, VkImageLayout OldLayout, VkImageLayout NewLayout,
                                             VkAccessFlags2 SrcAccessMask, VkAccessFlags2 DstAccessMask,
@@ -974,11 +999,12 @@ void FVulkanTriangle::TransitionImageLayout(uint32_t ImageIndex, VkImageLayout O
     .pImageMemoryBarriers = &Barrier,
   };
 
-  vkCmdPipelineBarrier2(CommandBuffer, &DependencyInfo);
+  vkCmdPipelineBarrier2(CommandBuffers[FrameIndex], &DependencyInfo);
 }
 
 void FVulkanTriangle::CreateSyncObjects() {
-  check(SwapChainImages.size() != 0);
+  check(!SwapChainImages.empty());
+  check(PresentCompleteSemaphores.empty() && RenderCompleteSemaphores.empty() && InFlightFences.empty());
   check(Device != VK_NULL_HANDLE);
 
   constexpr VkSemaphoreCreateInfo SemaphoreCreateInfo = {
@@ -994,9 +1020,15 @@ void FVulkanTriangle::CreateSyncObjects() {
   for (auto &Semaphore : RenderCompleteSemaphores) {
     vk_check(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &Semaphore));
   }
-  vk_check(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &PresentCompleteSemaphore));
+  PresentCompleteSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+  for (auto &Semaphore : PresentCompleteSemaphores) {
+    vk_check(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &Semaphore));
+  }
 
-  vk_check(vkCreateFence(Device, &FenceCreateInfo, nullptr, &DrawFence));
+  InFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+  for (auto &Fence : InFlightFences) {
+    vk_check(vkCreateFence(Device, &FenceCreateInfo, nullptr, &Fence));
+  }
 }
 
 void FVulkanTriangle::DestroySyncObjects() {
@@ -1004,56 +1036,66 @@ void FVulkanTriangle::DestroySyncObjects() {
     check(Device != VK_NULL_HANDLE);
     vkDestroySemaphore(Device, Semaphore, nullptr);
   }
+  RenderCompleteSemaphores.clear();
 
-  if (PresentCompleteSemaphore != VK_NULL_HANDLE) {
+  for (const auto Semaphore : PresentCompleteSemaphores) {
     check(Device != VK_NULL_HANDLE);
-    vkDestroySemaphore(Device, PresentCompleteSemaphore, nullptr);
+    vkDestroySemaphore(Device, Semaphore, nullptr);
   }
+  PresentCompleteSemaphores.clear();
 
-  if (DrawFence != VK_NULL_HANDLE) {
+  for (const auto Fence : InFlightFences) {
     check(Device != VK_NULL_HANDLE);
-    vkDestroyFence(Device, DrawFence, nullptr);
-    DrawFence = VK_NULL_HANDLE;
+    vkDestroyFence(Device, Fence, nullptr);
   }
 }
 
 EResult FVulkanTriangle::DrawFrame() {
   check(Device != VK_NULL_HANDLE);
-  check(DrawFence != VK_NULL_HANDLE);
-  check(PresentCompleteSemaphore != VK_NULL_HANDLE);
-  for (const auto Semaphore : RenderCompleteSemaphores) {
-    check(Semaphore != VK_NULL_HANDLE);
-  }
+  check(!InFlightFences.empty());
+  check(!PresentCompleteSemaphores.empty());
+  check(!RenderCompleteSemaphores.empty());
   check(SwapChain != VK_NULL_HANDLE);
 
-  vk_check(vkWaitForFences(Device, 1, &DrawFence,VK_TRUE, UINT64_MAX));
+  vk_check(vkWaitForFences(Device, 1, &InFlightFences[FrameIndex],VK_TRUE, UINT64_MAX));
+
+  if (bFramebufferResized) {
+    RecreateSwapChain();
+  }
 
   uint32_t ImageIndex = 0;
-  const VkResult AcquireResult = vkAcquireNextImageKHR(Device, SwapChain, UINT64_MAX, PresentCompleteSemaphore,
+  const VkResult AcquireResult = vkAcquireNextImageKHR(Device, SwapChain, UINT64_MAX,
+                                                       PresentCompleteSemaphores[FrameIndex],
                                                        VK_NULL_HANDLE, &ImageIndex);
-  if (AcquireResult == VK_ERROR_OUT_OF_DATE_KHR) { return EResult::SwapChainOutOfDate; }
-  if (AcquireResult == VK_SUBOPTIMAL_KHR) { return EResult::SwapChainSuboptimal; }
+  if (AcquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+    RecreateSwapChain();
+    return EResult::SwapChainOutOfDate;
+  }
+  if (AcquireResult == VK_SUBOPTIMAL_KHR) {
+    RecreateSwapChain();
+    return EResult::SwapChainSuboptimal;
+  }
   vk_check(AcquireResult);
 
   RecordCommandBuffer(ImageIndex);
 
-  vk_check(vkResetFences(Device, 1, &DrawFence));
+  vk_check(vkResetFences(Device, 1, &InFlightFences[FrameIndex]));
 
   constexpr VkPipelineStageFlags WaitDstStorageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;;
 
   const VkSubmitInfo SubmitInfo = {
     .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
     .waitSemaphoreCount = 1,
-    .pWaitSemaphores = &PresentCompleteSemaphore,
+    .pWaitSemaphores = &PresentCompleteSemaphores[FrameIndex],
     .pWaitDstStageMask = &WaitDstStorageMask,
     .commandBufferCount = 1,
-    .pCommandBuffers = &CommandBuffer,
+    .pCommandBuffers = &CommandBuffers[FrameIndex],
     .signalSemaphoreCount = 1,
     .pSignalSemaphores = &RenderCompleteSemaphores[ImageIndex],
   };
 
 
-  vk_check(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, DrawFence));
+  vk_check(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, InFlightFences[FrameIndex]));
 
   const VkPresentInfoKHR PresentInfo = {
     .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -1065,9 +1107,18 @@ EResult FVulkanTriangle::DrawFrame() {
   };
 
   const VkResult PresentResult = vkQueuePresentKHR(GraphicsQueue, &PresentInfo);
-  if (PresentResult == VK_ERROR_OUT_OF_DATE_KHR) { return EResult::SwapChainOutOfDate; }
-  if (PresentResult == VK_SUBOPTIMAL_KHR)         { return EResult::SwapChainSuboptimal; }
+  if (PresentResult == VK_SUBOPTIMAL_KHR || PresentResult == VK_ERROR_OUT_OF_DATE_KHR) {
+    RecreateSwapChain();
+    return EResult::SwapChainSuboptimal;
+  }
   vk_check(PresentResult);
 
+  FrameIndex = (FrameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+
   return EResult::Success;
+}
+
+void FVulkanTriangle::GLFWFramebufferResizeCallback(GLFWwindow *window, int Width, int Height) {
+  auto *App = static_cast<FVulkanTriangle *>(glfwGetWindowUserPointer(window));
+  App->bFramebufferResized = true;
 }

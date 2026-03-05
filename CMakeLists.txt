@@ -63,8 +63,6 @@ target_compile_options(vulkan PRIVATE
         -fno-exceptions
         -fno-rtti
         -Wall
-        -Wextra
-        -Wpedantic
 
         $<$<CONFIG:Debug>:
         -O0
