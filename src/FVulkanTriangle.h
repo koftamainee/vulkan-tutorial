@@ -8,6 +8,7 @@
 #include <array>
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
+#include <glm/glm.hpp>
 
 #include "EResult.h"
 
@@ -35,6 +36,20 @@ private:
     }
   };
 
+  struct Vertex {
+    glm::vec2 Position;
+    glm::vec3 Color;
+
+    inline static VkVertexInputBindingDescription GetBindingDescription() {
+      return {
+      .binding = 0,
+      .stride = sizeof(Vertex),
+      .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+      };
+    }
+  };
+
+private:
   void MainLoop();
 
   void InitWindow();
@@ -109,6 +124,12 @@ private:
 
   static constexpr std::array<const char *, 2> DeviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME
+  };
+
+  const std::vector<Vertex> Vertices = {
+    {.Position = {0.0f, -0.5f}, .Color = {1.0f, 0.0f, 0.0f}},
+    {.Position = {0.5f, 0.5f}, .Color = {0.0f, 1.0f, 0.0f}},
+    {.Position = {-0.5f, 0.5f}, .Color = {0.0f, 0.0f, 1.0f}},
   };
 
   static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
