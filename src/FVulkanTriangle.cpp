@@ -1,6 +1,7 @@
 #include "FVulkanTriangle.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -8,6 +9,8 @@
 #include <utility>
 #include <fstream>
 #include <vector>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace {
   VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT Severity,
@@ -144,22 +147,29 @@ void FVulkanTriangle::InitVulkan() {
   CreateLogicalDevice();
   CreateSwapChain();
   CreateImageViews();
+  CreateDescriptorSetLayout();
   CreateGraphicsPipeline();
   CreateCommandPool();
   CreateVertexBuffer();
   CreateIndexBuffer();
+  CreateUniformBuffer();
+  CreateDescriptorPool();
+  CreateDescriptorSets();
   CreateCommandBuffers();
   CreateSyncObjects();
-
 }
 
 void FVulkanTriangle::DeinitVulkan() {
   DestroySyncObjects();
   DestroyCommandBuffers();
+  DestroyDescriptorSets();
+  DestroyDescriptorPool();
+  DestroyUniformBuffer();
   DestroyIndexBuffer();
   DestroyVertexBuffer();
   DestroyCommandPool();
   DestroyGraphicsPipeline();
+  DestroyDescriptorSetLayout();
   DestroyImageViews();
   DestroySwapChain();
   DestroyLogicalDevice();
@@ -699,6 +709,34 @@ void FVulkanTriangle::DestroyImageViews() {
   SwapChainImageViews.clear();
 }
 
+void FVulkanTriangle::CreateDescriptorSetLayout() {
+  check(Device != VK_NULL_HANDLE);
+
+  static constexpr VkDescriptorSetLayoutBinding UBOLayoutBinding = {
+    .binding = 0,
+    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .descriptorCount = 1,
+    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+  };
+
+  static constexpr VkDescriptorSetLayoutCreateInfo DescriptorSetLayoutCreateInfo = {
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+    .bindingCount = 1,
+    .pBindings = &UBOLayoutBinding,
+  };
+
+  vk_check(vkCreateDescriptorSetLayout(Device, &DescriptorSetLayoutCreateInfo, nullptr, &DescriptorSetLayout));
+
+}
+
+void FVulkanTriangle::DestroyDescriptorSetLayout() {
+  if (DescriptorSetLayout != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyDescriptorSetLayout(Device, DescriptorSetLayout, nullptr);
+    DescriptorSetLayout = VK_NULL_HANDLE;
+  }
+}
+
 void FVulkanTriangle::CreateGraphicsPipeline() {
   check(Device != VK_NULL_HANDLE);
   const auto ShaderCode = ReadFile("../shaders/slang.spv");
@@ -765,7 +803,7 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
     .rasterizerDiscardEnable = VK_FALSE,
     .polygonMode = VK_POLYGON_MODE_FILL,
     .cullMode = VK_CULL_MODE_BACK_BIT,
-    .frontFace = VK_FRONT_FACE_CLOCKWISE,
+    .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
     .depthBiasEnable = VK_FALSE,
     .depthBiasSlopeFactor = 1.0f,
     .lineWidth = 1.0f,
@@ -791,13 +829,14 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
     .pAttachments = &ColorBlendAttachmentState,
   };
 
-  constexpr VkPipelineLayoutCreateInfo LayoutCreateInfo = {
+  const VkPipelineLayoutCreateInfo LayoutCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-    .setLayoutCount = 0,
+    .setLayoutCount = 1,
+    .pSetLayouts = &DescriptorSetLayout,
     .pushConstantRangeCount = 0,
   };
 
-  vk_check(vkCreatePipelineLayout(Device, &LayoutCreateInfo, nullptr, &PipelineLayout));
+  vk_check(vkCreatePipelineLayout(Device, &LayoutCreateInfo, nullptr, &GraphicsPipelineLayout));
 
   const VkPipelineRenderingCreateInfo RenderingCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
@@ -817,7 +856,7 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
     .pMultisampleState = &MultisampleStateCreateInfo,
     .pColorBlendState = &ColorBlendStateCreateInfo,
     .pDynamicState = &DynamicStateCreateInfo,
-    .layout = PipelineLayout,
+    .layout = GraphicsPipelineLayout,
     .renderPass = nullptr,
   };
 
@@ -848,10 +887,10 @@ void FVulkanTriangle::DestroyShaderModule(VkShaderModule ShaderModule) const {
 }
 
 void FVulkanTriangle::DestroyGraphicsPipeline() {
-  if (PipelineLayout != VK_NULL_HANDLE) {
+  if (GraphicsPipelineLayout != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
-    vkDestroyPipelineLayout(Device, PipelineLayout, nullptr);
-    PipelineLayout = VK_NULL_HANDLE;
+    vkDestroyPipelineLayout(Device, GraphicsPipelineLayout, nullptr);
+    GraphicsPipelineLayout = VK_NULL_HANDLE;
   }
   if (GraphicsPipeline != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
@@ -1044,6 +1083,132 @@ void FVulkanTriangle::DestroyIndexBuffer() const {
   DestroyBuffer(IndexBuffer, IndexBufferMemory);
 }
 
+void FVulkanTriangle::CreateUniformBuffer() {
+  check(Device != VK_NULL_HANDLE);
+  UniformBuffers.clear();
+  UniformBuffersMemory.clear();
+  UniformBuffersMapped.clear();
+
+  for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    constexpr VkDeviceSize BufferSize = sizeof(FUniformBufferObject);
+    constexpr VkBufferUsageFlags Usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    constexpr VkMemoryPropertyFlags Properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    auto [Buffer, Memory] = CreateBuffer(BufferSize, Usage, Properties);
+    void *Mapped;
+    vk_check(vkMapMemory(Device, Memory, 0, BufferSize, 0, &Mapped));
+
+    UniformBuffers.emplace_back(Buffer);
+    UniformBuffersMemory.emplace_back(Memory);
+    UniformBuffersMapped.emplace_back(Mapped);
+  }
+}
+
+void FVulkanTriangle::UpdateUniformBuffer(uint32_t CurrentImage) const {
+  static auto StartTime = std::chrono::high_resolution_clock::now();
+
+  const auto CurrentTime = std::chrono::high_resolution_clock::now();
+  const float Time = std::chrono::duration<float, std::chrono::seconds::period>(CurrentTime - StartTime).count();
+
+  FUniformBufferObject UBO{};
+  UBO.Model = glm::rotate(glm::mat4(1.0f), Time * glm::radians(90.0f), glm::vec3(0.5f, 0.33f, 1.0f));
+  UBO.View = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+                         glm::vec3(0.0f, 0.0f, 1.0f));
+  UBO.Projection = glm::perspective(glm::radians(45.0f), static_cast<float>(SwapChainExtent.width) /
+                                    static_cast<float>(SwapChainExtent.height), 0.1f, 10.0f);
+
+  UBO.Projection[1][1] *= -1;
+
+  memcpy(UniformBuffersMapped[CurrentImage], &UBO, sizeof(UBO));
+}
+
+void FVulkanTriangle::DestroyUniformBuffer() {
+  if (!UniformBuffers.empty()) {
+    check(UniformBuffers.size() == UniformBuffersMemory.size());
+    check(UniformBuffersMemory.size() == UniformBuffersMapped.size());
+    check(Device != VK_NULL_HANDLE);
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      vkUnmapMemory(Device, UniformBuffersMemory[i]);
+      vkFreeMemory(Device, UniformBuffersMemory[i], nullptr);
+      vkDestroyBuffer(Device, UniformBuffers[i], nullptr);
+    }
+    UniformBuffers.clear();
+    UniformBuffersMemory.clear();
+    UniformBuffersMapped.clear();
+  }
+}
+
+void FVulkanTriangle::CreateDescriptorPool() {
+  check(Device != VK_NULL_HANDLE);
+
+  static constexpr VkDescriptorPoolSize DescriptorPoolSize = {
+    .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .descriptorCount = MAX_FRAMES_IN_FLIGHT,
+  };
+
+  static constexpr VkDescriptorPoolCreateInfo DescriptorPoolCreateInfo = {
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+    .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+    .maxSets = MAX_FRAMES_IN_FLIGHT,
+    .poolSizeCount = 1,
+    .pPoolSizes = &DescriptorPoolSize,
+  };
+
+  vk_check(vkCreateDescriptorPool(Device, &DescriptorPoolCreateInfo, nullptr, &DescriptorPool));
+}
+
+void FVulkanTriangle::DestroyDescriptorPool() {
+  if (DescriptorPool != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyDescriptorPool(Device, DescriptorPool, nullptr);
+    DescriptorPool = VK_NULL_HANDLE;
+  }
+}
+
+void FVulkanTriangle::CreateDescriptorSets() {
+  check(Device != VK_NULL_HANDLE);
+
+  const std::vector<VkDescriptorSetLayout> DescriptorSetLayouts(MAX_FRAMES_IN_FLIGHT, DescriptorSetLayout);
+  const VkDescriptorSetAllocateInfo DescriptorSetAllocateInfo = {
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+    .descriptorPool = DescriptorPool,
+    .descriptorSetCount = static_cast<uint32_t>(DescriptorSetLayouts.size()),
+    .pSetLayouts = DescriptorSetLayouts.data(),
+  };
+
+  DescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+  vk_check(vkAllocateDescriptorSets(Device, &DescriptorSetAllocateInfo, DescriptorSets.data()));
+
+  for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    const VkDescriptorBufferInfo BufferInfo{
+      .buffer = UniformBuffers[i],
+      .offset = 0,
+      .range = sizeof(FUniformBufferObject),
+    };
+
+    const VkWriteDescriptorSet DescriptorWrite{
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .dstSet = DescriptorSets[i],
+      .dstBinding = 0,
+      .dstArrayElement = 0,
+      .descriptorCount = 1,
+      .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+      .pBufferInfo = &BufferInfo,
+    };
+
+    vkUpdateDescriptorSets(Device, 1, &DescriptorWrite, 0, nullptr);
+  }
+}
+
+void FVulkanTriangle::DestroyDescriptorSets() {
+  if (!DescriptorSets.empty()) {
+    check(Device != VK_NULL_HANDLE);
+    vkFreeDescriptorSets(Device, DescriptorPool, static_cast<uint32_t>(DescriptorSets.size()), DescriptorSets.data());
+    DescriptorSets.clear();
+  }
+}
+
 void FVulkanTriangle::CreateCommandBuffers() {
   check(Device != VK_NULL_HANDLE);
 
@@ -1124,6 +1289,8 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
   vkCmdBindVertexBuffers(CommandBuffers[FrameIndex], 0, 1, &VertexBuffer, Offsets);
   vkCmdBindIndexBuffer(CommandBuffers[FrameIndex], IndexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
+  vkCmdBindDescriptorSets(CommandBuffers[FrameIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipelineLayout, 0,
+                          1, &DescriptorSets[FrameIndex], 0, nullptr);
   vkCmdDrawIndexed(CommandBuffers[FrameIndex], Indices.size(), 1, 0, 0, 0);
 
   vkCmdEndRendering(CommandBuffers[FrameIndex]);
@@ -1262,8 +1429,9 @@ EResult FVulkanTriangle::DrawFrame() {
 
   vk_check(vkResetFences(Device, 1, &InFlightFences[FrameIndex]));
 
-  constexpr VkPipelineStageFlags WaitDstStorageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;;
+  UpdateUniformBuffer(FrameIndex);
 
+  constexpr VkPipelineStageFlags WaitDstStorageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;;
   const VkSubmitInfo SubmitInfo = {
     .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
     .waitSemaphoreCount = 1,

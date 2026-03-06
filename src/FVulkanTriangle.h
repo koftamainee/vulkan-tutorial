@@ -56,6 +56,12 @@ private:
     }
   };
 
+  struct FUniformBufferObject {
+    glm::mat4 Model;
+    glm::mat4 View;
+    glm::mat4 Projection;
+  };
+
 private:
   void MainLoop();
 
@@ -96,6 +102,9 @@ private:
   void CreateImageViews();
   void DestroyImageViews();
 
+  void CreateDescriptorSetLayout();
+  void DestroyDescriptorSetLayout();
+
   void CreateGraphicsPipeline();
   VkShaderModule CreateShaderModule(const std::vector<char> &ShaderCode) const;
   void DestroyShaderModule(VkShaderModule ShaderModule) const;
@@ -114,6 +123,16 @@ private:
 
   void CreateIndexBuffer();
   void DestroyIndexBuffer() const;
+
+  void CreateUniformBuffer();
+  void UpdateUniformBuffer(uint32_t CurrentImage) const;
+  void DestroyUniformBuffer();
+
+  void CreateDescriptorPool();
+  void DestroyDescriptorPool();
+
+  void CreateDescriptorSets();
+  void DestroyDescriptorSets();
 
   void CreateCommandBuffers();
   void RecordCommandBuffer(uint32_t ImageIndex) const;
@@ -145,19 +164,19 @@ private:
   };
 
   const std::vector<FVertex> Vertices = {
-    {{ 0.0000f,  0.0000f}, {1.00f, 0.85f, 0.0f}},
+    {{ 0.0000f,  0.0000f}, {1.00f, 0.85f, 0.0f}},  // 0 center — hot yellow core
 
-    {{ 0.0000f, -0.5500f}, {1.00f, 0.08f, 0.00f}},
-    {{ 0.5226f, -0.1699f}, {1.00f, 0.08f, 0.00f}},
-    {{ 0.3230f,  0.4455f}, {0.60f, 0.00f, 0.00f}},
-    {{-0.3230f,  0.4455f}, {0.60f, 0.00f, 0.00f}},
-    {{-0.5226f, -0.1699f}, {1.00f, 0.08f, 0.00f}},
+    {{ 0.0000f, -0.5500f}, {1.00f, 0.08f, 0.00f}},  // 1 top
+    {{ 0.5226f, -0.1699f}, {1.00f, 0.08f, 0.00f}},  // 2 upper-right
+    {{ 0.3230f,  0.4455f}, {0.60f, 0.00f, 0.00f}},  // 3 lower-right
+    {{-0.3230f,  0.4455f}, {0.60f, 0.00f, 0.00f}},  // 4 lower-left
+    {{-0.5226f, -0.1699f}, {1.00f, 0.08f, 0.00f}},  // 5 upper-left
 
-    {{ 0.2129f, -0.2938f}, {1.00f, 0.30f, 0.00f}},
-    {{ 0.3441f,  0.1119f}, {0.80f, 0.04f, 0.00f}},
-    {{ 0.0000f,  0.3618f}, {0.50f, 0.00f, 0.00f}},
-    {{-0.3441f,  0.1119f}, {0.80f, 0.04f, 0.00f}},
-    {{-0.2129f, -0.2938f}, {1.00f, 0.30f, 0.00f}},
+    {{ 0.2129f, -0.2938f}, {1.00f, 0.30f, 0.00f}},  // 6
+    {{ 0.3441f,  0.1119f}, {0.80f, 0.04f, 0.00f}},  // 7
+    {{ 0.0000f,  0.3618f}, {0.50f, 0.00f, 0.00f}},  // 8
+    {{-0.3441f,  0.1119f}, {0.80f, 0.04f, 0.00f}},  // 9
+    {{-0.2129f, -0.2938f}, {1.00f, 0.30f, 0.00f}},  // 10
 };
 
   const std::vector<uint16_t> Indices = {
@@ -204,7 +223,9 @@ private:
   std::vector<VkImage> SwapChainImages{};
   std::vector<VkImageView> SwapChainImageViews{};
 
-  VkPipelineLayout PipelineLayout = VK_NULL_HANDLE;
+  VkDescriptorSetLayout DescriptorSetLayout = VK_NULL_HANDLE;
+
+  VkPipelineLayout GraphicsPipelineLayout = VK_NULL_HANDLE;
   VkPipeline GraphicsPipeline = VK_NULL_HANDLE;
 
   VkCommandPool CommandPool = VK_NULL_HANDLE;
@@ -216,7 +237,12 @@ private:
   VkBuffer IndexBuffer = VK_NULL_HANDLE;
   VkDeviceMemory IndexBufferMemory = VK_NULL_HANDLE;
 
+  std::vector<VkBuffer> UniformBuffers{};
+  std::vector<VkDeviceMemory> UniformBuffersMemory{};
+  std::vector<void *> UniformBuffersMapped{};
 
+  VkDescriptorPool DescriptorPool = VK_NULL_HANDLE;
+  std::vector<VkDescriptorSet> DescriptorSets{};
 
   std::vector<VkSemaphore> PresentCompleteSemaphores{};
   std::vector<VkSemaphore> RenderCompleteSemaphores{};
