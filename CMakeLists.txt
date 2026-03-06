@@ -25,7 +25,7 @@ function(add_slang_shader_target TARGET)
             -profile spirv_1_4
             -emit-spirv-directly
             -fvk-use-entrypoint-name
-            -entry VertMain -entry FragMain
+            -entry vert_main -entry frag_main
             -o ${OUTPUT_SPV}
             WORKING_DIRECTORY ${SHADERS_DIR}
             DEPENDS ${SHADER_SOURCES}

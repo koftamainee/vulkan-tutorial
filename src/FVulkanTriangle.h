@@ -36,15 +36,22 @@ private:
     }
   };
 
-  struct Vertex {
+  struct FVertex {
     glm::vec2 Position;
     glm::vec3 Color;
 
-    inline static VkVertexInputBindingDescription GetBindingDescription() {
+    constexpr inline static VkVertexInputBindingDescription GetBindingDescription() {
       return {
-      .binding = 0,
-      .stride = sizeof(Vertex),
-      .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        .binding = 0,
+        .stride = sizeof(FVertex),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+      };
+    }
+
+    constexpr inline static std::array<VkVertexInputAttributeDescription, 2> GetAttributeDescription() {
+      return {
+        {{0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(FVertex, Position)},
+         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FVertex, Color)}},
       };
     }
   };
@@ -97,6 +104,17 @@ private:
   void CreateCommandPool();
   void DestroyCommandPool();
 
+  void CreateVertexBuffer();
+  std::pair<VkBuffer, VkDeviceMemory> CreateBuffer(VkDeviceSize Size, VkBufferUsageFlags Usage,
+                                                   VkMemoryPropertyFlags Properties) const;
+  uint32_t FindMemoryType(uint32_t TypeFilter, VkMemoryPropertyFlags Properties) const;
+  void CopyBuffer(VkBuffer Src, VkBuffer Dst, VkDeviceSize Size) const;
+  void DestroyBuffer(VkBuffer Buffer, VkDeviceMemory Memory) const;
+  void DestroyVertexBuffer() const;
+
+  void CreateIndexBuffer();
+  void DestroyIndexBuffer() const;
+
   void CreateCommandBuffers();
   void RecordCommandBuffer(uint32_t ImageIndex) const;
   void DestroyCommandBuffers();
@@ -126,11 +144,34 @@ private:
     VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME
   };
 
-  const std::vector<Vertex> Vertices = {
-    {.Position = {0.0f, -0.5f}, .Color = {1.0f, 0.0f, 0.0f}},
-    {.Position = {0.5f, 0.5f}, .Color = {0.0f, 1.0f, 0.0f}},
-    {.Position = {-0.5f, 0.5f}, .Color = {0.0f, 0.0f, 1.0f}},
-  };
+  const std::vector<FVertex> Vertices = {
+    {{ 0.0000f,  0.0000f}, {1.00f, 0.85f, 0.0f}},
+
+    {{ 0.0000f, -0.5500f}, {1.00f, 0.08f, 0.00f}},
+    {{ 0.5226f, -0.1699f}, {1.00f, 0.08f, 0.00f}},
+    {{ 0.3230f,  0.4455f}, {0.60f, 0.00f, 0.00f}},
+    {{-0.3230f,  0.4455f}, {0.60f, 0.00f, 0.00f}},
+    {{-0.5226f, -0.1699f}, {1.00f, 0.08f, 0.00f}},
+
+    {{ 0.2129f, -0.2938f}, {1.00f, 0.30f, 0.00f}},
+    {{ 0.3441f,  0.1119f}, {0.80f, 0.04f, 0.00f}},
+    {{ 0.0000f,  0.3618f}, {0.50f, 0.00f, 0.00f}},
+    {{-0.3441f,  0.1119f}, {0.80f, 0.04f, 0.00f}},
+    {{-0.2129f, -0.2938f}, {1.00f, 0.30f, 0.00f}},
+};
+
+  const std::vector<uint16_t> Indices = {
+    0,  1,  6,
+    0,  6,  2,
+    0,  2,  7,
+    0,  7,  3,
+    0,  3,  8,
+    0,  8,  4,
+    0,  4,  9,
+    0,  9,  5,
+    0,  5,  10,
+    0,  10, 1,
+};
 
   static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -168,6 +209,14 @@ private:
 
   VkCommandPool CommandPool = VK_NULL_HANDLE;
   std::vector<VkCommandBuffer> CommandBuffers{};
+
+  VkBuffer VertexBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory VertexBufferMemory = VK_NULL_HANDLE;
+
+  VkBuffer IndexBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory IndexBufferMemory = VK_NULL_HANDLE;
+
+
 
   std::vector<VkSemaphore> PresentCompleteSemaphores{};
   std::vector<VkSemaphore> RenderCompleteSemaphores{};

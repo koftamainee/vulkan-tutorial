@@ -146,6 +146,8 @@ void FVulkanTriangle::InitVulkan() {
   CreateImageViews();
   CreateGraphicsPipeline();
   CreateCommandPool();
+  CreateVertexBuffer();
+  CreateIndexBuffer();
   CreateCommandBuffers();
   CreateSyncObjects();
 
@@ -154,6 +156,8 @@ void FVulkanTriangle::InitVulkan() {
 void FVulkanTriangle::DeinitVulkan() {
   DestroySyncObjects();
   DestroyCommandBuffers();
+  DestroyIndexBuffer();
+  DestroyVertexBuffer();
   DestroyCommandPool();
   DestroyGraphicsPipeline();
   DestroyImageViews();
@@ -189,7 +193,7 @@ void FVulkanTriangle::CreateInstance() {
     .ppEnabledLayerNames = nullptr,
     .enabledExtensionCount = static_cast<uint32_t>(Extensions.size()),
     .ppEnabledExtensionNames = Extensions.data(),
-};
+  };
 
   if constexpr (EnableValidationLayers) {
     CreateInfo.pNext = &DebugCreateInfo;
@@ -412,13 +416,13 @@ void FVulkanTriangle::CreateLogicalDevice() {
   check(Instance != VK_NULL_HANDLE);
   check(PhysicalDevice != VK_NULL_HANDLE);
 
-  const auto Indices = FindQueueFamilies(PhysicalDevice, Surface);
+  const auto QueueIndices = FindQueueFamilies(PhysicalDevice, Surface);
 
-  QueueFamilyIndices = Indices;
+  QueueFamilyIndices = QueueIndices;
 
   std::set<uint32_t> UniqueQueueFamilies = {
-    Indices.GraphicsFamily,
-    Indices.PresentFamily
+    QueueIndices.GraphicsFamily,
+    QueueIndices.PresentFamily
   };
 
   float QueuePriority = 0.5f;
@@ -463,8 +467,8 @@ void FVulkanTriangle::CreateLogicalDevice() {
 
   vk_check(vkCreateDevice(PhysicalDevice, &DeviceCreateInfo, nullptr, &Device));
 
-  vkGetDeviceQueue(Device, Indices.GraphicsFamily, 0, &GraphicsQueue);
-  vkGetDeviceQueue(Device, Indices.PresentFamily, 0, &PresentQueue);
+  vkGetDeviceQueue(Device, QueueIndices.GraphicsFamily, 0, &GraphicsQueue);
+  vkGetDeviceQueue(Device, QueueIndices.PresentFamily, 0, &PresentQueue);
 }
 
 FVulkanTriangle::FQueueFamilyIndices FVulkanTriangle::FindQueueFamilies(VkPhysicalDevice PhysicalDevice,
@@ -707,21 +711,28 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
     .stage = VK_SHADER_STAGE_VERTEX_BIT,
     .module = ShaderModule,
-    .pName = "VertMain",
+    .pName = "vert_main",
   };
 
   const VkPipelineShaderStageCreateInfo FragShaderStageCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
     .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
     .module = ShaderModule,
-    .pName = "FragMain",
+    .pName = "frag_main",
   };
 
   const std::array<VkPipelineShaderStageCreateInfo, 2> ShaderStages = {VertShaderStageCreateInfo,
                                                                        FragShaderStageCreateInfo};
 
+  constexpr VkVertexInputBindingDescription BindingDescription = FVertex::GetBindingDescription();
+  constexpr std::array<VkVertexInputAttributeDescription, 2> AttributeDescriptions = FVertex::GetAttributeDescription();
+
   VkPipelineVertexInputStateCreateInfo VertexInputStateCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    .vertexBindingDescriptionCount = 1,
+    .pVertexBindingDescriptions = &BindingDescription,
+    .vertexAttributeDescriptionCount = 2,
+    .pVertexAttributeDescriptions = AttributeDescriptions.data(),
   };
 
   VkPipelineInputAssemblyStateCreateInfo InputAssemblyStateCreateInfo = {
@@ -867,6 +878,172 @@ void FVulkanTriangle::DestroyCommandPool() {
   }
 }
 
+void FVulkanTriangle::CreateVertexBuffer() {
+  check(Device != VK_NULL_HANDLE);
+  const VkDeviceSize BufferSize = sizeof(Vertices[0]) * Vertices.size();
+
+  constexpr VkMemoryPropertyFlags StagingProperties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+  constexpr VkBufferUsageFlags StagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+  constexpr VkMemoryPropertyFlags VertexProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+  constexpr VkBufferUsageFlags VertexUsage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+
+  VkBuffer StagingBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory StagingBufferMemory = VK_NULL_HANDLE;
+  std::tie(StagingBuffer, StagingBufferMemory) = CreateBuffer(BufferSize, StagingUsage,
+                                                              StagingProperties);
+  std::tie(VertexBuffer, VertexBufferMemory) = CreateBuffer(BufferSize, VertexUsage, VertexProperties);
+
+  void *data;
+  vk_check(vkMapMemory(Device, StagingBufferMemory, 0, BufferSize, 0, &data));
+  memcpy(data, Vertices.data(), BufferSize);
+  vkUnmapMemory(Device, StagingBufferMemory);
+
+  CopyBuffer(StagingBuffer, VertexBuffer, BufferSize);
+
+  DestroyBuffer(StagingBuffer, StagingBufferMemory);
+}
+
+std::pair<VkBuffer, VkDeviceMemory> FVulkanTriangle::CreateBuffer(VkDeviceSize Size, VkBufferUsageFlags Usage,
+                                                                  VkMemoryPropertyFlags Properties) const {
+  check(Device != VK_NULL_HANDLE);
+  const VkBufferCreateInfo BufferCreateInfo = {
+    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+    .size = Size,
+    .usage = Usage,
+    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+  };
+
+  VkBuffer Buffer = VK_NULL_HANDLE;
+  VkDeviceMemory Memory = VK_NULL_HANDLE;
+  vk_check(vkCreateBuffer(Device, &BufferCreateInfo, nullptr, &Buffer));
+
+  VkMemoryRequirements MemoryRequirements;
+  vkGetBufferMemoryRequirements(Device, Buffer, &MemoryRequirements);
+
+
+  const VkMemoryAllocateInfo MemoryAllocateInfo = {
+    .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+    .allocationSize = MemoryRequirements.size,
+    .memoryTypeIndex = FindMemoryType(MemoryRequirements.memoryTypeBits, Properties),
+  };
+
+  vk_check(vkAllocateMemory(Device, &MemoryAllocateInfo, nullptr, &Memory));
+  vk_check(vkBindBufferMemory(Device, Buffer, Memory, 0));
+
+  return {Buffer, Memory};
+}
+
+
+uint32_t FVulkanTriangle::FindMemoryType(uint32_t TypeFilter, VkMemoryPropertyFlags Properties) const {
+  check(PhysicalDevice != VK_NULL_HANDLE);
+
+  VkPhysicalDeviceMemoryProperties MemoryProperties;
+  vkGetPhysicalDeviceMemoryProperties(PhysicalDevice, &MemoryProperties);
+
+  for (uint32_t i = 0; i < MemoryProperties.memoryTypeCount; i++) {
+    if ((TypeFilter & (1 << i)) && (MemoryProperties.memoryTypes[i].propertyFlags & Properties) == Properties) {
+      return i;
+    }
+  }
+
+  fatal(true, "Failed to find suitable memory type");
+}
+
+void FVulkanTriangle::CopyBuffer(VkBuffer Src, VkBuffer Dst, VkDeviceSize Size) const {
+  check(Device != VK_NULL_HANDLE);
+  check(CommandPool != VK_NULL_HANDLE);
+  check(GraphicsQueue != VK_NULL_HANDLE);
+
+  const VkCommandBufferAllocateInfo CommandBufferAllocateInfo = {
+    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+    .commandPool = CommandPool,
+    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    .commandBufferCount = 1,
+  };
+
+  VkCommandBuffer CopyCommandBuffer = VK_NULL_HANDLE;
+  vk_check(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, &CopyCommandBuffer));
+
+  constexpr VkCommandBufferBeginInfo CommandBufferBeginInfo = {
+    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+  };
+
+  vk_check(vkBeginCommandBuffer(CopyCommandBuffer, &CommandBufferBeginInfo));
+
+  const VkBufferCopy CopyRegion = {
+    .srcOffset = 0,
+    .dstOffset = 0,
+    .size = Size,
+  };
+
+  vkCmdCopyBuffer(CopyCommandBuffer, Src, Dst, 1, &CopyRegion);
+
+  vk_check(vkEndCommandBuffer(CopyCommandBuffer));
+
+  const VkSubmitInfo SubmitInfo = {
+    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+    .commandBufferCount = 1,
+    .pCommandBuffers = &CopyCommandBuffer,
+  };
+
+  vk_check(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, nullptr));
+
+  vkQueueWaitIdle(GraphicsQueue);
+
+  vkFreeCommandBuffers(Device, CommandPool, 1, &CopyCommandBuffer);
+}
+
+
+void FVulkanTriangle::DestroyBuffer(VkBuffer Buffer, VkDeviceMemory Memory) const {
+  if (Buffer != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    if (Memory != VK_NULL_HANDLE) {
+      vkFreeMemory(Device, Memory, nullptr);
+      Memory = VK_NULL_HANDLE;
+    }
+    vkDestroyBuffer(Device, Buffer, nullptr);
+    Buffer = VK_NULL_HANDLE;
+  }
+}
+
+void FVulkanTriangle::DestroyVertexBuffer() const {
+  DestroyBuffer(VertexBuffer, VertexBufferMemory);
+}
+
+void FVulkanTriangle::CreateIndexBuffer() {
+  check(Device != VK_NULL_HANDLE);
+  const VkDeviceSize BufferSize = sizeof(Indices[0]) * Indices.size();
+
+  constexpr VkMemoryPropertyFlags StagingProperties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+  constexpr VkBufferUsageFlags StagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+  constexpr VkMemoryPropertyFlags IndexProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+  constexpr VkBufferUsageFlags IndexUsage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+
+  VkBuffer StagingBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory StagingBufferMemory = VK_NULL_HANDLE;
+  std::tie(StagingBuffer, StagingBufferMemory) = CreateBuffer(BufferSize, StagingUsage,
+                                                              StagingProperties);
+  std::tie(IndexBuffer, IndexBufferMemory) = CreateBuffer(BufferSize, IndexUsage, IndexProperties);
+
+  void *data;
+  vk_check(vkMapMemory(Device, StagingBufferMemory, 0, BufferSize, 0, &data));
+  memcpy(data, Indices.data(), BufferSize);
+  vkUnmapMemory(Device, StagingBufferMemory);
+
+  CopyBuffer(StagingBuffer, IndexBuffer, BufferSize);
+
+  DestroyBuffer(StagingBuffer, StagingBufferMemory);
+}
+
+void FVulkanTriangle::DestroyIndexBuffer() const {
+  DestroyBuffer(IndexBuffer, IndexBufferMemory);
+}
+
 void FVulkanTriangle::CreateCommandBuffers() {
   check(Device != VK_NULL_HANDLE);
 
@@ -943,7 +1120,11 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
   vkCmdSetViewport(CommandBuffers[FrameIndex], 0, 1, &Viewport);
   vkCmdSetScissor(CommandBuffers[FrameIndex], 0, 1, &Scissor);
 
-  vkCmdDraw(CommandBuffers[FrameIndex], 3, 1, 0, 0);
+  constexpr VkDeviceSize Offsets[] = {0};
+  vkCmdBindVertexBuffers(CommandBuffers[FrameIndex], 0, 1, &VertexBuffer, Offsets);
+  vkCmdBindIndexBuffer(CommandBuffers[FrameIndex], IndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+  vkCmdDrawIndexed(CommandBuffers[FrameIndex], Indices.size(), 1, 0, 0, 0);
 
   vkCmdEndRendering(CommandBuffers[FrameIndex]);
 
