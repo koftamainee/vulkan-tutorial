@@ -39,6 +39,14 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(FetchContent)
+FetchContent_Declare(
+        stb
+        GIT_REPOSITORY https://github.com/nothings/stb.git
+        GIT_TAG        master
+)
+FetchContent_MakeAvailable(stb)
+
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
@@ -102,12 +110,11 @@ target_link_options(vulkan PRIVATE
 
 target_include_directories(vulkan PRIVATE
         src
+        ${stb_SOURCE_DIR}
 )
-
 
 target_link_libraries(vulkan PRIVATE
         Vulkan::Vulkan
         glfw
         glm::glm
 )
-

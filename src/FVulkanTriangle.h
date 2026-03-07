@@ -1,14 +1,21 @@
 #pragma once
 
 #define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
+#include <glm/glm.hpp>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
+
+#include <vulkan/vulkan.h>
 
 #include <memory>
 #include <string>
 #include <vector>
 #include <array>
-#include <GLFW/glfw3.h>
-#include <vulkan/vulkan.h>
-#include <glm/glm.hpp>
 
 #include "EResult.h"
 
@@ -39,6 +46,7 @@ private:
   struct FVertex {
     glm::vec2 Position;
     glm::vec3 Color;
+    glm::vec2 TexCoord;
 
     constexpr inline static VkVertexInputBindingDescription GetBindingDescription() {
       return {
@@ -48,18 +56,20 @@ private:
       };
     }
 
-    constexpr inline static std::array<VkVertexInputAttributeDescription, 2> GetAttributeDescription() {
-      return {
-        {{0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(FVertex, Position)},
-         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FVertex, Color)}},
-      };
+    constexpr inline static std::array<VkVertexInputAttributeDescription, 3> GetAttributeDescription() {
+      return {{
+        {0, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(FVertex, Position)},
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FVertex, Color)},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(FVertex, TexCoord)},
+    }};
     }
   };
 
   struct FUniformBufferObject {
-    glm::mat4 Model;
-    glm::mat4 View;
-    glm::mat4 Projection;
+    alignas (4) float Time;
+    alignas(16) glm::mat4 Model;
+    alignas(16) glm::mat4 View;
+    alignas(16) glm::mat4 Projection;
   };
 
 private:
@@ -113,6 +123,23 @@ private:
   void CreateCommandPool();
   void DestroyCommandPool();
 
+  void CreateTextureImage();
+  std::pair<VkImage, VkDeviceMemory> CreateImage(uint32_t Width, uint32_t Height, VkFormat Format, VkImageTiling Tiling,
+                                                 VkImageUsageFlags Usage, VkMemoryPropertyFlags Properties) const;
+  void DestroyImage(VkImage Image, VkDeviceMemory Memory) const;
+  void TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout) const;
+  void CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t Width, uint32_t Height) const;
+  void DestroyTextureImage();
+
+  VkImageView CreateImageView(VkImage Image, VkFormat Format) const;
+  void DestroyImageView(VkImageView ImageView) const;
+
+  void CreateTextureImageView();
+  void DestroyTextureImageView();
+
+  void CreateTextureSampler();
+  void DestroyTextureSampler();
+
   void CreateVertexBuffer();
   std::pair<VkBuffer, VkDeviceMemory> CreateBuffer(VkDeviceSize Size, VkBufferUsageFlags Usage,
                                                    VkMemoryPropertyFlags Properties) const;
@@ -137,6 +164,9 @@ private:
   void CreateCommandBuffers();
   void RecordCommandBuffer(uint32_t ImageIndex) const;
   void DestroyCommandBuffers();
+
+  VkCommandBuffer BeginSingleTimeCommands() const;
+  void EndSingleTimeCommands(VkCommandBuffer &CommandBuffer) const;
 
   void TransitionImageLayout(
     uint32_t ImageIndex,
@@ -164,32 +194,14 @@ private:
   };
 
   const std::vector<FVertex> Vertices = {
-    {{ 0.0000f,  0.0000f}, {1.00f, 0.85f, 0.0f}},  // 0 center — hot yellow core
-
-    {{ 0.0000f, -0.5500f}, {1.00f, 0.08f, 0.00f}},  // 1 top
-    {{ 0.5226f, -0.1699f}, {1.00f, 0.08f, 0.00f}},  // 2 upper-right
-    {{ 0.3230f,  0.4455f}, {0.60f, 0.00f, 0.00f}},  // 3 lower-right
-    {{-0.3230f,  0.4455f}, {0.60f, 0.00f, 0.00f}},  // 4 lower-left
-    {{-0.5226f, -0.1699f}, {1.00f, 0.08f, 0.00f}},  // 5 upper-left
-
-    {{ 0.2129f, -0.2938f}, {1.00f, 0.30f, 0.00f}},  // 6
-    {{ 0.3441f,  0.1119f}, {0.80f, 0.04f, 0.00f}},  // 7
-    {{ 0.0000f,  0.3618f}, {0.50f, 0.00f, 0.00f}},  // 8
-    {{-0.3441f,  0.1119f}, {0.80f, 0.04f, 0.00f}},  // 9
-    {{-0.2129f, -0.2938f}, {1.00f, 0.30f, 0.00f}},  // 10
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+    {{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {2.0f, 0.0f}},
+    {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {2.0f, 2.0f}},
+    {{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 2.0f}},
 };
-
   const std::vector<uint16_t> Indices = {
-    0,  1,  6,
-    0,  6,  2,
-    0,  2,  7,
-    0,  7,  3,
-    0,  3,  8,
-    0,  8,  4,
-    0,  4,  9,
-    0,  9,  5,
-    0,  5,  10,
-    0,  10, 1,
+    0, 1, 2,
+    2, 3, 0,
 };
 
   static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
@@ -247,6 +259,12 @@ private:
   std::vector<VkSemaphore> PresentCompleteSemaphores{};
   std::vector<VkSemaphore> RenderCompleteSemaphores{};
   std::vector<VkFence> InFlightFences{};
+
+  VkImage TextureImage = VK_NULL_HANDLE;
+  VkDeviceMemory TextureImageMemory = VK_NULL_HANDLE;
+  VkImageView TextureImageView = VK_NULL_HANDLE;
+
+  VkSampler TextureSampler = VK_NULL_HANDLE;
 
   FQueueFamilyIndices QueueFamilyIndices{};
 

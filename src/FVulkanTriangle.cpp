@@ -150,6 +150,9 @@ void FVulkanTriangle::InitVulkan() {
   CreateDescriptorSetLayout();
   CreateGraphicsPipeline();
   CreateCommandPool();
+  CreateTextureImage();
+  CreateTextureImageView();
+  CreateTextureSampler();
   CreateVertexBuffer();
   CreateIndexBuffer();
   CreateUniformBuffer();
@@ -167,6 +170,9 @@ void FVulkanTriangle::DeinitVulkan() {
   DestroyUniformBuffer();
   DestroyIndexBuffer();
   DestroyVertexBuffer();
+  DestroyTextureSampler();
+  DestroyTextureImageView();
+  DestroyTextureImage();
   DestroyCommandPool();
   DestroyGraphicsPipeline();
   DestroyDescriptorSetLayout();
@@ -361,6 +367,10 @@ VkPhysicalDevice FVulkanTriangle::PickPhysicalDevice(
       continue;
     }
 
+    if (!Features.samplerAnisotropy) {
+      continue;
+    }
+
     uint32_t ExtensionCount = 0;
     vk_check(vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount, nullptr));
     std::vector<VkExtensionProperties> AvailableExtensions(ExtensionCount);
@@ -448,7 +458,7 @@ void FVulkanTriangle::CreateLogicalDevice() {
 
   VkPhysicalDeviceFeatures2 Features2{
     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-    .pNext = nullptr,
+    .features = {.samplerAnisotropy = true},
   };
 
   VkPhysicalDeviceVulkan13Features Vulkan13Features = {
@@ -687,24 +697,14 @@ void FVulkanTriangle::CreateImageViews() {
 
 
   for (const auto Image : SwapChainImages) {
-    const VkImageViewCreateInfo ImageViewCreateInfo = {
-      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-      .image = Image,
-      .viewType = VK_IMAGE_VIEW_TYPE_2D,
-      .format = SwapChainSurfaceFormat.format,
-      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-    };
-
-    VkImageView ImageView = VK_NULL_HANDLE;
-    vk_check(vkCreateImageView(Device, &ImageViewCreateInfo, nullptr, &ImageView));
+    VkImageView ImageView = CreateImageView(Image, SwapChainSurfaceFormat.format);
     SwapChainImageViews.emplace_back(ImageView);
   }
 }
 
 void FVulkanTriangle::DestroyImageViews() {
   for (const auto ImageView : SwapChainImageViews) {
-    check(Device != VK_NULL_HANDLE);
-    vkDestroyImageView(Device, ImageView, nullptr);
+    DestroyImageView(ImageView);
   }
   SwapChainImageViews.clear();
 }
@@ -712,17 +712,17 @@ void FVulkanTriangle::DestroyImageViews() {
 void FVulkanTriangle::CreateDescriptorSetLayout() {
   check(Device != VK_NULL_HANDLE);
 
-  static constexpr VkDescriptorSetLayoutBinding UBOLayoutBinding = {
-    .binding = 0,
-    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .descriptorCount = 1,
-    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+  static constexpr std::array Bindings = {
+    VkDescriptorSetLayoutBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                                 VK_SHADER_STAGE_VERTEX_BIT, nullptr},
+    VkDescriptorSetLayoutBinding{1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+                                 VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
   };
 
   static constexpr VkDescriptorSetLayoutCreateInfo DescriptorSetLayoutCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    .bindingCount = 1,
-    .pBindings = &UBOLayoutBinding,
+    .bindingCount = Bindings.size(),
+    .pBindings = Bindings.data(),
   };
 
   vk_check(vkCreateDescriptorSetLayout(Device, &DescriptorSetLayoutCreateInfo, nullptr, &DescriptorSetLayout));
@@ -763,13 +763,13 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
                                                                        FragShaderStageCreateInfo};
 
   constexpr VkVertexInputBindingDescription BindingDescription = FVertex::GetBindingDescription();
-  constexpr std::array<VkVertexInputAttributeDescription, 2> AttributeDescriptions = FVertex::GetAttributeDescription();
+  constexpr std::array AttributeDescriptions = FVertex::GetAttributeDescription();
 
   VkPipelineVertexInputStateCreateInfo VertexInputStateCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
     .vertexBindingDescriptionCount = 1,
     .pVertexBindingDescriptions = &BindingDescription,
-    .vertexAttributeDescriptionCount = 2,
+    .vertexAttributeDescriptionCount = AttributeDescriptions.size(),
     .pVertexAttributeDescriptions = AttributeDescriptions.data(),
   };
 
@@ -917,6 +917,238 @@ void FVulkanTriangle::DestroyCommandPool() {
   }
 }
 
+void FVulkanTriangle::CreateTextureImage() {
+  check(Device != VK_NULL_HANDLE);
+
+  int TextureWidth = 0;
+  int TextureHeight = 0;
+  int TextureChannels = 0;
+
+  stbi_uc *Pixels = stbi_load("../textures/texture.jpg", &TextureWidth, &TextureHeight, &TextureChannels,
+                              STBI_rgb_alpha);
+  const VkDeviceSize ImageSize = TextureWidth * TextureHeight * 4;
+  fatal(Pixels == nullptr, "Failed to load texture image");
+
+  constexpr VkBufferUsageFlags StagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  constexpr VkMemoryPropertyFlags StagingProperties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+  auto [StagingBuffer, StagingMemory] = CreateBuffer(ImageSize, StagingUsage, StagingProperties);
+
+  void *Data = nullptr;
+  vk_check(vkMapMemory(Device, StagingMemory, 0, ImageSize, 0, &Data));
+  memcpy(Data, Pixels, ImageSize);
+  vkUnmapMemory(Device, StagingMemory);
+  stbi_image_free(Pixels);
+
+  constexpr VkFormat ImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
+  constexpr VkImageTiling ImageTiling = VK_IMAGE_TILING_OPTIMAL;
+  constexpr VkImageUsageFlags ImageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  constexpr VkMemoryPropertyFlags ImageMemoryProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+  std::tie(TextureImage, TextureImageMemory) = CreateImage(TextureWidth, TextureHeight, ImageFormat, ImageTiling,
+                                                           ImageUsage, ImageMemoryProperties);
+
+  TransitionImageLayout(TextureImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+  CopyBufferToImage(StagingBuffer, TextureImage, TextureWidth, TextureHeight);
+
+  TransitionImageLayout(TextureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+  DestroyBuffer(StagingBuffer, StagingMemory);
+}
+
+std::pair<VkImage, VkDeviceMemory> FVulkanTriangle::CreateImage(uint32_t Width, uint32_t Height, VkFormat Format,
+                                                                VkImageTiling Tiling, VkImageUsageFlags Usage,
+                                                                VkMemoryPropertyFlags Properties) const {
+  check(Device != VK_NULL_HANDLE);
+  const VkImageCreateInfo ImageCreateInfo = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+    .imageType = VK_IMAGE_TYPE_2D,
+    .format = Format,
+    .extent = {Width, Height, 1},
+    .mipLevels = 1,
+    .arrayLayers = 1,
+    .samples = VK_SAMPLE_COUNT_1_BIT,
+    .tiling = Tiling,
+    .usage = Usage,
+    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+  };
+
+  VkImage Image = VK_NULL_HANDLE;
+  VkDeviceMemory Memory = VK_NULL_HANDLE;
+  vk_check(vkCreateImage(Device, &ImageCreateInfo, nullptr, &Image));
+  VkMemoryRequirements MemoryRequirements{};
+  vkGetImageMemoryRequirements(Device, Image, &MemoryRequirements);
+
+  const VkMemoryAllocateInfo MemoryAllocateInfo = {
+    .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+    .allocationSize = MemoryRequirements.size,
+    .memoryTypeIndex = FindMemoryType(MemoryRequirements.memoryTypeBits, Properties),
+  };
+
+  vk_check(vkAllocateMemory(Device, &MemoryAllocateInfo, nullptr, &Memory));
+  vk_check(vkBindImageMemory(Device, Image, Memory, 0));
+
+  return {Image, Memory};
+}
+
+void FVulkanTriangle::DestroyImage(VkImage Image, VkDeviceMemory Memory) const {
+  if (Memory != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkFreeMemory(Device, Memory, nullptr);
+    Memory = VK_NULL_HANDLE;
+  }
+  if (Image != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyImage(Device, Image, nullptr);
+    Image = VK_NULL_HANDLE;
+  }
+}
+
+void FVulkanTriangle::TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout) const {
+  VkCommandBuffer CommandBuffer = BeginSingleTimeCommands();
+
+  VkImageMemoryBarrier ImageMemoryBarrier = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+    .oldLayout = OldLayout,
+    .newLayout = NewLayout,
+    .image = Image,
+    .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+  };
+
+  VkPipelineStageFlags SourceStage = 0;
+  VkPipelineStageFlags DestinationStage = 0;
+  if (OldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+    && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+
+    ImageMemoryBarrier.srcAccessMask = {};
+    ImageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+    SourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    DestinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  }
+  else if (OldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+
+    ImageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    ImageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    DestinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  }
+  else {
+    checkf(true, "Not supported layout transition");
+  }
+
+  vkCmdPipelineBarrier(CommandBuffer, SourceStage, DestinationStage, 0,
+                       0, nullptr, 0, nullptr,
+                       1, &ImageMemoryBarrier);
+
+  EndSingleTimeCommands(CommandBuffer);
+}
+
+void FVulkanTriangle::CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t Width, uint32_t Height) const {
+  VkCommandBuffer CommandBuffer = BeginSingleTimeCommands();
+
+  const VkBufferImageCopy Region{
+    .bufferOffset = 0,
+    .bufferRowLength = 0,
+    .bufferImageHeight = 0,
+    .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+    .imageOffset = {0, 0, 0},
+    .imageExtent = {Width, Height, 1},
+  };
+
+  vkCmdCopyBufferToImage(CommandBuffer, Buffer, Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &Region);
+
+  EndSingleTimeCommands(CommandBuffer);
+}
+
+void FVulkanTriangle::DestroyTextureImage() {
+  if (TextureImageMemory != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkFreeMemory(Device, TextureImageMemory, nullptr);
+    TextureImageMemory = VK_NULL_HANDLE;
+  }
+  if (TextureImage != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyImage(Device, TextureImage, nullptr);
+    TextureImage = VK_NULL_HANDLE;
+  }
+}
+
+VkImageView FVulkanTriangle::CreateImageView(VkImage Image, VkFormat Format) const {
+  check(Device != VK_NULL_HANDLE);
+  const VkImageViewCreateInfo ImageViewCreateInfo = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+    .image = Image,
+    .viewType = VK_IMAGE_VIEW_TYPE_2D,
+    .format = Format,
+    .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+  };
+
+  VkImageView ImageView = VK_NULL_HANDLE;
+  vk_check(vkCreateImageView(Device, &ImageViewCreateInfo, nullptr, &ImageView));
+
+  return ImageView;
+}
+
+void FVulkanTriangle::DestroyImageView(VkImageView ImageView) const {
+  if (ImageView != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyImageView(Device, ImageView, nullptr);
+  }
+}
+
+void FVulkanTriangle::CreateTextureImageView() {
+  TextureImageView = CreateImageView(TextureImage, VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+void FVulkanTriangle::DestroyTextureImageView() {
+  if (TextureImageView != VK_NULL_HANDLE) {
+    DestroyImageView(TextureImageView);
+    TextureImageView = VK_NULL_HANDLE;
+  }
+}
+
+void FVulkanTriangle::CreateTextureSampler() {
+  check(Device != VK_NULL_HANDLE);
+  check(PhysicalDevice != VK_NULL_HANDLE);
+
+  VkPhysicalDeviceProperties Properties;
+  vkGetPhysicalDeviceProperties(PhysicalDevice, &Properties);
+  const VkSamplerCreateInfo TextureSamplerCreateInfo = {
+    .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+    .magFilter = VK_FILTER_LINEAR,
+    .minFilter = VK_FILTER_LINEAR,
+    .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+    .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .mipLodBias = 0.0f,
+    .anisotropyEnable = VK_TRUE,
+    .maxAnisotropy = Properties.limits.maxSamplerAnisotropy,
+    .compareEnable = VK_FALSE,
+    .compareOp = VK_COMPARE_OP_ALWAYS,
+    .minLod = 0.0f,
+    .maxLod = 0.0f,
+    .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+    .unnormalizedCoordinates = VK_FALSE,
+  };
+
+  vk_check(vkCreateSampler(Device, &TextureSamplerCreateInfo, nullptr, &TextureSampler));
+}
+
+void FVulkanTriangle::DestroyTextureSampler() {
+  if (TextureSampler != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroySampler(Device, TextureSampler, nullptr);
+    TextureSampler = VK_NULL_HANDLE;
+  }
+}
+
 void FVulkanTriangle::CreateVertexBuffer() {
   check(Device != VK_NULL_HANDLE);
   const VkDeviceSize BufferSize = sizeof(Vertices[0]) * Vertices.size();
@@ -995,22 +1227,7 @@ void FVulkanTriangle::CopyBuffer(VkBuffer Src, VkBuffer Dst, VkDeviceSize Size) 
   check(CommandPool != VK_NULL_HANDLE);
   check(GraphicsQueue != VK_NULL_HANDLE);
 
-  const VkCommandBufferAllocateInfo CommandBufferAllocateInfo = {
-    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-    .commandPool = CommandPool,
-    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-    .commandBufferCount = 1,
-  };
-
-  VkCommandBuffer CopyCommandBuffer = VK_NULL_HANDLE;
-  vk_check(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, &CopyCommandBuffer));
-
-  constexpr VkCommandBufferBeginInfo CommandBufferBeginInfo = {
-    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-  };
-
-  vk_check(vkBeginCommandBuffer(CopyCommandBuffer, &CommandBufferBeginInfo));
+  VkCommandBuffer CopyCommandBuffer = BeginSingleTimeCommands();
 
   const VkBufferCopy CopyRegion = {
     .srcOffset = 0,
@@ -1020,19 +1237,7 @@ void FVulkanTriangle::CopyBuffer(VkBuffer Src, VkBuffer Dst, VkDeviceSize Size) 
 
   vkCmdCopyBuffer(CopyCommandBuffer, Src, Dst, 1, &CopyRegion);
 
-  vk_check(vkEndCommandBuffer(CopyCommandBuffer));
-
-  const VkSubmitInfo SubmitInfo = {
-    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-    .commandBufferCount = 1,
-    .pCommandBuffers = &CopyCommandBuffer,
-  };
-
-  vk_check(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, nullptr));
-
-  vkQueueWaitIdle(GraphicsQueue);
-
-  vkFreeCommandBuffers(Device, CommandPool, 1, &CopyCommandBuffer);
+  EndSingleTimeCommands(CopyCommandBuffer);
 }
 
 
@@ -1111,13 +1316,14 @@ void FVulkanTriangle::UpdateUniformBuffer(uint32_t CurrentImage) const {
   const float Time = std::chrono::duration<float, std::chrono::seconds::period>(CurrentTime - StartTime).count();
 
   FUniformBufferObject UBO{};
-  UBO.Model = glm::rotate(glm::mat4(1.0f), Time * glm::radians(90.0f), glm::vec3(0.5f, 0.33f, 1.0f));
+  UBO.Model = glm::rotate(glm::mat4(1.0f), Time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
   UBO.View = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
                          glm::vec3(0.0f, 0.0f, 1.0f));
   UBO.Projection = glm::perspective(glm::radians(45.0f), static_cast<float>(SwapChainExtent.width) /
                                     static_cast<float>(SwapChainExtent.height), 0.1f, 10.0f);
 
   UBO.Projection[1][1] *= -1;
+  UBO.Time = Time;
 
   memcpy(UniformBuffersMapped[CurrentImage], &UBO, sizeof(UBO));
 }
@@ -1142,17 +1348,18 @@ void FVulkanTriangle::DestroyUniformBuffer() {
 void FVulkanTriangle::CreateDescriptorPool() {
   check(Device != VK_NULL_HANDLE);
 
-  static constexpr VkDescriptorPoolSize DescriptorPoolSize = {
-    .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .descriptorCount = MAX_FRAMES_IN_FLIGHT,
+  static constexpr std::array PoolSize{
+    VkDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT),
+    VkDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT)
   };
+
 
   static constexpr VkDescriptorPoolCreateInfo DescriptorPoolCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
     .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
     .maxSets = MAX_FRAMES_IN_FLIGHT,
-    .poolSizeCount = 1,
-    .pPoolSizes = &DescriptorPoolSize,
+    .poolSizeCount = PoolSize.size(),
+    .pPoolSizes = PoolSize.data(),
   };
 
   vk_check(vkCreateDescriptorPool(Device, &DescriptorPoolCreateInfo, nullptr, &DescriptorPool));
@@ -1187,17 +1394,34 @@ void FVulkanTriangle::CreateDescriptorSets() {
       .range = sizeof(FUniformBufferObject),
     };
 
-    const VkWriteDescriptorSet DescriptorWrite{
-      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-      .dstSet = DescriptorSets[i],
-      .dstBinding = 0,
-      .dstArrayElement = 0,
-      .descriptorCount = 1,
-      .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-      .pBufferInfo = &BufferInfo,
+    const VkDescriptorImageInfo ImageInfo{
+      .sampler = TextureSampler,
+      .imageView = TextureImageView,
+      .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
     };
 
-    vkUpdateDescriptorSets(Device, 1, &DescriptorWrite, 0, nullptr);
+    std::array DescriptorWrites = {
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = DescriptorSets[i],
+        .dstBinding = 0,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .pBufferInfo = &BufferInfo,
+      },
+      VkWriteDescriptorSet{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = DescriptorSets[i],
+        .dstBinding = 1,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &ImageInfo,
+      },
+    };
+
+    vkUpdateDescriptorSets(Device, DescriptorWrites.size(), DescriptorWrites.data(), 0, nullptr);
   }
 }
 
@@ -1313,6 +1537,49 @@ void FVulkanTriangle::DestroyCommandBuffers() {
   check(Device != VK_NULL_HANDLE);
   vkFreeCommandBuffers(Device, CommandPool, MAX_FRAMES_IN_FLIGHT, CommandBuffers.data());
   CommandBuffers.clear();
+}
+
+VkCommandBuffer FVulkanTriangle::BeginSingleTimeCommands() const {
+  check(CommandPool != VK_NULL_HANDLE);
+  check(Device != VK_NULL_HANDLE);
+
+  const VkCommandBufferAllocateInfo CommandBufferAllocateInfo = {
+    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+    .commandPool = CommandPool,
+    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    .commandBufferCount = 1,
+  };
+  VkCommandBuffer Buffer;
+  vk_check(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, &Buffer));
+  constexpr VkCommandBufferBeginInfo CommandBufferBeginInfo = {
+    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+  };
+
+  vk_check(vkBeginCommandBuffer(Buffer, &CommandBufferBeginInfo));
+
+  return Buffer;
+}
+
+void FVulkanTriangle::EndSingleTimeCommands(VkCommandBuffer &CommandBuffer) const {
+  if (CommandBuffer != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    check(GraphicsQueue != VK_NULL_HANDLE);
+    check(CommandPool != VK_NULL_HANDLE);
+
+    vk_check(vkEndCommandBuffer(CommandBuffer));
+
+    const VkSubmitInfo SubmitInfo = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &CommandBuffer,
+    };
+    vk_check(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, nullptr));
+    vk_check(vkQueueWaitIdle(GraphicsQueue));
+
+    vkFreeCommandBuffers(Device, CommandPool, 1, &CommandBuffer);
+    CommandBuffer = VK_NULL_HANDLE;
+  }
 }
 
 
