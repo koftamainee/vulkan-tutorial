@@ -40,7 +40,7 @@ private:
   };
 
   struct FVertex {
-    glm::vec2 Position;
+    glm::vec3 Position;
     glm::vec3 Color;
     glm::vec2 TexCoord;
 
@@ -54,15 +54,20 @@ private:
 
     constexpr inline static std::array<VkVertexInputAttributeDescription, 3> GetAttributeDescription() {
       return {{
-        {0, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(FVertex, Position)},
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT,    offsetof(FVertex, Position)},
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FVertex, Color)},
         {2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(FVertex, TexCoord)},
     }};
     }
+
+    bool operator==(const FVertex& other) const {
+      return Position == other.Position && Color == other.Color && TexCoord == other.TexCoord;
+    }
   };
 
+  friend class std::hash<FVulkanTriangle::FVertex>;
+
   struct FUniformBufferObject {
-    alignas (4) float Time;
     alignas(16) glm::mat4 Model;
     alignas(16) glm::mat4 View;
     alignas(16) glm::mat4 Projection;
@@ -119,6 +124,12 @@ private:
   void CreateCommandPool();
   void DestroyCommandPool();
 
+  void CreateDepthResources();
+  VkFormat FindSupportedFormat(const std::vector<VkFormat> &Formats, VkImageTiling Tiling, VkFormatFeatureFlags Features) const;
+  VkFormat FindDepthFormat() const;
+  static bool HasStencilComponent(VkFormat Format);
+  void DestroyDepthResources();
+
   void CreateTextureImage();
   std::pair<VkImage, VkDeviceMemory> CreateImage(uint32_t Width, uint32_t Height, VkFormat Format, VkImageTiling Tiling,
                                                  VkImageUsageFlags Usage, VkMemoryPropertyFlags Properties) const;
@@ -127,7 +138,7 @@ private:
   void CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t Width, uint32_t Height) const;
   void DestroyTextureImage();
 
-  VkImageView CreateImageView(VkImage Image, VkFormat Format) const;
+  VkImageView CreateImageView(VkImage Image, VkFormat Format, VkImageAspectFlags AspectFlags) const;
   void DestroyImageView(VkImageView ImageView) const;
 
   void CreateTextureImageView();
@@ -135,6 +146,8 @@ private:
 
   void CreateTextureSampler();
   void DestroyTextureSampler();
+
+  void LoadModel();
 
   void CreateVertexBuffer();
   std::pair<VkBuffer, VkDeviceMemory> CreateBuffer(VkDeviceSize Size, VkBufferUsageFlags Usage,
@@ -165,13 +178,14 @@ private:
   void EndSingleTimeCommands(VkCommandBuffer &CommandBuffer) const;
 
   void TransitionImageLayout(
-    uint32_t ImageIndex,
+    VkImage Image,
     VkImageLayout OldLayout,
     VkImageLayout NewLayout,
     VkAccessFlags2 SrcAccessMask,
     VkAccessFlags2 DstAccessMask,
     VkPipelineStageFlags2 SrcStageMask,
-    VkPipelineStageFlags2 DstStageMask) const;
+    VkPipelineStageFlags2 DstStageMask,
+    VkImageAspectFlags ImageAspectFlags) const;
 
   void CreateSyncObjects();
   void DestroySyncObjects();
@@ -189,18 +203,10 @@ private:
     VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME
   };
 
-  const std::vector<FVertex> Vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {2.0f, 0.0f}},
-    {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {2.0f, 2.0f}},
-    {{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 2.0f}},
-};
-  const std::vector<uint16_t> Indices = {
-    0, 1, 2,
-    2, 3, 0,
-};
-
   static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+
+  const std::string kModelPath = "../models/viking_room.obj";
+  const std::string kTexturePath = "../textures/viking_room.png";
 
 #ifdef NDEBUG
   static constexpr bool EnableValidationLayers = false;
@@ -239,6 +245,10 @@ private:
   VkCommandPool CommandPool = VK_NULL_HANDLE;
   std::vector<VkCommandBuffer> CommandBuffers{};
 
+
+  std::vector<FVertex> Vertices{};
+  std::vector<uint32_t> Indices{};
+
   VkBuffer VertexBuffer = VK_NULL_HANDLE;
   VkDeviceMemory VertexBufferMemory = VK_NULL_HANDLE;
 
@@ -259,6 +269,10 @@ private:
   VkImage TextureImage = VK_NULL_HANDLE;
   VkDeviceMemory TextureImageMemory = VK_NULL_HANDLE;
   VkImageView TextureImageView = VK_NULL_HANDLE;
+
+  VkImage DepthImage = VK_NULL_HANDLE;
+  VkDeviceMemory DepthImageMemory = VK_NULL_HANDLE;
+  VkImageView DepthImageView = VK_NULL_HANDLE;
 
   VkSampler TextureSampler = VK_NULL_HANDLE;
 

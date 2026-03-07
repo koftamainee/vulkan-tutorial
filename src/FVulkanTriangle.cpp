@@ -8,11 +8,27 @@
 #include <utility>
 #include <fstream>
 #include <vector>
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <tiny_obj_loader.h>
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
+
+
+template <>
+struct std::hash<FVulkanTriangle::FVertex> {
+  size_t operator()(FVulkanTriangle::FVertex const &Vertex) const noexcept {
+    return ((hash<glm::vec3>()(Vertex.Position) ^
+        (hash<glm::vec3>()(Vertex.Color) << 1)) >> 1) ^
+      (hash<glm::vec2>()(Vertex.TexCoord) << 1);
+  }
+};
 
 namespace {
   VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT Severity,
@@ -152,9 +168,11 @@ void FVulkanTriangle::InitVulkan() {
   CreateDescriptorSetLayout();
   CreateGraphicsPipeline();
   CreateCommandPool();
+  CreateDepthResources();
   CreateTextureImage();
   CreateTextureImageView();
   CreateTextureSampler();
+  LoadModel();
   CreateVertexBuffer();
   CreateIndexBuffer();
   CreateUniformBuffer();
@@ -175,6 +193,7 @@ void FVulkanTriangle::DeinitVulkan() {
   DestroyTextureSampler();
   DestroyTextureImageView();
   DestroyTextureImage();
+  DestroyDepthResources();
   DestroyCommandPool();
   DestroyGraphicsPipeline();
   DestroyDescriptorSetLayout();
@@ -683,11 +702,13 @@ void FVulkanTriangle::RecreateSwapChain() {
     glfwWaitEvents();
   }
 
+  DestroyDepthResources();
   DestroyImageViews();
   DestroySwapChain();
 
   CreateSwapChain();
   CreateImageViews();
+  CreateDepthResources();
   bFramebufferResized = false;
 }
 
@@ -699,7 +720,7 @@ void FVulkanTriangle::CreateImageViews() {
 
 
   for (const auto Image : SwapChainImages) {
-    VkImageView ImageView = CreateImageView(Image, SwapChainSurfaceFormat.format);
+    VkImageView ImageView = CreateImageView(Image, SwapChainSurfaceFormat.format, VK_IMAGE_ASPECT_COLOR_BIT);
     SwapChainImageViews.emplace_back(ImageView);
   }
 }
@@ -817,6 +838,15 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
     .sampleShadingEnable = VK_FALSE,
   };
 
+  VkPipelineDepthStencilStateCreateInfo DepthStencilStateCreateInfo = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+    .depthTestEnable = VK_TRUE,
+    .depthWriteEnable = VK_TRUE,
+    .depthCompareOp = VK_COMPARE_OP_LESS,
+    .depthBoundsTestEnable = VK_FALSE,
+    .stencilTestEnable = VK_FALSE,
+  };
+
   constexpr VkPipelineColorBlendAttachmentState ColorBlendAttachmentState = {
     .blendEnable = VK_FALSE,
     .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
@@ -840,10 +870,13 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
 
   vk_verify(vkCreatePipelineLayout(Device, &LayoutCreateInfo, nullptr, &GraphicsPipelineLayout));
 
+  VkFormat DepthFormat = FindDepthFormat();
+
   const VkPipelineRenderingCreateInfo RenderingCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
     .colorAttachmentCount = 1,
     .pColorAttachmentFormats = &SwapChainSurfaceFormat.format,
+    .depthAttachmentFormat = DepthFormat,
   };
 
   const VkGraphicsPipelineCreateInfo GraphicsPipelineCreateInfo = {
@@ -856,6 +889,7 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
     .pViewportState = &ViewportStateCreateInfo,
     .pRasterizationState = &RasterizerStateCreateInfo,
     .pMultisampleState = &MultisampleStateCreateInfo,
+    .pDepthStencilState = &DepthStencilStateCreateInfo,
     .pColorBlendState = &ColorBlendStateCreateInfo,
     .pDynamicState = &DynamicStateCreateInfo,
     .layout = GraphicsPipelineLayout,
@@ -919,6 +953,61 @@ void FVulkanTriangle::DestroyCommandPool() {
   }
 }
 
+void FVulkanTriangle::CreateDepthResources() {
+  const VkFormat DepthFormat = FindDepthFormat();
+
+  std::tie(DepthImage, DepthImageMemory) = CreateImage(SwapChainExtent.width, SwapChainExtent.height, DepthFormat,
+                                                       VK_IMAGE_TILING_OPTIMAL,
+                                                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  DepthImageView = CreateImageView(DepthImage, DepthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+}
+
+VkFormat FVulkanTriangle::FindSupportedFormat(const std::vector<VkFormat> &Formats, VkImageTiling Tiling,
+                                              VkFormatFeatureFlags Features) const {
+  check(PhysicalDevice != VK_NULL_HANDLE);
+
+  for (const auto Format : Formats) {
+    VkFormatProperties FormatProperties;
+    vkGetPhysicalDeviceFormatProperties(PhysicalDevice, Format, &FormatProperties);
+    if (Tiling == VK_IMAGE_TILING_LINEAR && (FormatProperties.linearTilingFeatures & Features) == Features) {
+      return Format;
+    }
+    if (Tiling == VK_IMAGE_TILING_OPTIMAL && (FormatProperties.optimalTilingFeatures & Features) == Features) {
+      return Format;
+    }
+  }
+
+  fatal(true, "Failed to find supported format");
+}
+
+VkFormat FVulkanTriangle::FindDepthFormat() const {
+  return FindSupportedFormat(
+    {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT},
+    VK_IMAGE_TILING_OPTIMAL,
+    VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+    );
+}
+
+bool FVulkanTriangle::HasStencilComponent(VkFormat Format) {
+  return Format == VK_FORMAT_D32_SFLOAT_S8_UINT || Format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
+void FVulkanTriangle::DestroyDepthResources() {
+  if (DepthImageView != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    DestroyImageView(DepthImageView);
+    DepthImageView = VK_NULL_HANDLE;
+  }
+  if (DepthImageMemory != VK_NULL_HANDLE || DepthImage != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    DestroyImage(DepthImage, DepthImageMemory);
+    DepthImage = VK_NULL_HANDLE;
+    DepthImageMemory = VK_NULL_HANDLE;
+  }
+}
+
 void FVulkanTriangle::CreateTextureImage() {
   check(Device != VK_NULL_HANDLE);
 
@@ -926,7 +1015,7 @@ void FVulkanTriangle::CreateTextureImage() {
   int TextureHeight = 0;
   int TextureChannels = 0;
 
-  stbi_uc *Pixels = stbi_load("../textures/texture.jpg", &TextureWidth, &TextureHeight, &TextureChannels,
+  stbi_uc *Pixels = stbi_load(kTexturePath.c_str(), &TextureWidth, &TextureHeight, &TextureChannels,
                               STBI_rgb_alpha);
   const VkDeviceSize ImageSize = TextureWidth * TextureHeight * 4;
   fatal(Pixels == nullptr, "Failed to load texture image");
@@ -1081,14 +1170,14 @@ void FVulkanTriangle::DestroyTextureImage() {
   }
 }
 
-VkImageView FVulkanTriangle::CreateImageView(VkImage Image, VkFormat Format) const {
+VkImageView FVulkanTriangle::CreateImageView(VkImage Image, VkFormat Format, VkImageAspectFlags AspectFlags) const {
   check(Device != VK_NULL_HANDLE);
   const VkImageViewCreateInfo ImageViewCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
     .image = Image,
     .viewType = VK_IMAGE_VIEW_TYPE_2D,
     .format = Format,
-    .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+    .subresourceRange = {AspectFlags, 0, 1, 0, 1},
   };
 
   VkImageView ImageView = VK_NULL_HANDLE;
@@ -1105,7 +1194,7 @@ void FVulkanTriangle::DestroyImageView(VkImageView ImageView) const {
 }
 
 void FVulkanTriangle::CreateTextureImageView() {
-  TextureImageView = CreateImageView(TextureImage, VK_FORMAT_R8G8B8A8_SRGB);
+  TextureImageView = CreateImageView(TextureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 void FVulkanTriangle::DestroyTextureImageView() {
@@ -1148,6 +1237,42 @@ void FVulkanTriangle::DestroyTextureSampler() {
     check(Device != VK_NULL_HANDLE);
     vkDestroySampler(Device, TextureSampler, nullptr);
     TextureSampler = VK_NULL_HANDLE;
+  }
+}
+
+void FVulkanTriangle::LoadModel() {
+  tinyobj::attrib_t Attrib;
+  std::vector<tinyobj::shape_t> Shapes;
+  std::vector<tinyobj::material_t> Materials;
+  std::string Warn, Err;
+
+  fatal(!tinyobj::LoadObj(&Attrib, &Shapes, &Materials, &Warn, &Err, kModelPath.c_str()), "Failed to load 3d model");
+
+  std::unordered_map<FVertex, uint32_t> UniqueVertices{};
+
+  for (const auto &Shape : Shapes) {
+    for (const auto &Index : Shape.mesh.indices) {
+      FVertex Vertex{};
+      Vertex.Position = {
+        Attrib.vertices[3 * Index.vertex_index + 0],
+        Attrib.vertices[3 * Index.vertex_index + 1],
+        Attrib.vertices[3 * Index.vertex_index + 2]
+      };
+      Vertex.TexCoord = {
+        Attrib.texcoords[2 * Index.texcoord_index + 0],
+        1.0f - Attrib.texcoords[2 * Index.texcoord_index + 1],
+      };
+
+      Vertex.Color = {1.0f, 1.0f, 1.0f};
+
+      if (!UniqueVertices.contains(Vertex)) {
+        UniqueVertices[Vertex] = static_cast<uint32_t>(UniqueVertices.size());
+        Vertices.push_back(Vertex);
+      }
+
+
+      Indices.push_back(UniqueVertices[Vertex]);
+    }
   }
 }
 
@@ -1312,20 +1437,15 @@ void FVulkanTriangle::CreateUniformBuffer() {
 }
 
 void FVulkanTriangle::UpdateUniformBuffer(uint32_t CurrentImage) const {
-  static auto StartTime = std::chrono::high_resolution_clock::now();
-
-  const auto CurrentTime = std::chrono::high_resolution_clock::now();
-  const float Time = std::chrono::duration<float, std::chrono::seconds::period>(CurrentTime - StartTime).count();
 
   FUniformBufferObject UBO{};
-  UBO.Model = glm::rotate(glm::mat4(1.0f), Time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+  UBO.Model = glm::rotate(glm::mat4(1.0f), glm::radians(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
   UBO.View = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
                          glm::vec3(0.0f, 0.0f, 1.0f));
   UBO.Projection = glm::perspective(glm::radians(45.0f), static_cast<float>(SwapChainExtent.width) /
                                     static_cast<float>(SwapChainExtent.height), 0.1f, 10.0f);
 
   UBO.Projection[1][1] *= -1;
-  UBO.Time = Time;
 
   memcpy(UniformBuffersMapped[CurrentImage], &UBO, sizeof(UBO));
 }
@@ -1463,15 +1583,27 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
   vk_verify(vkBeginCommandBuffer(CommandBuffers[FrameIndex], &BeginInfo));
 
   TransitionImageLayout(
-    ImageIndex,
+    SwapChainImages[ImageIndex],
     VK_IMAGE_LAYOUT_UNDEFINED,
     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     {},
     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
+    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+    VK_IMAGE_ASPECT_COLOR_BIT);
 
-  constexpr VkClearColorValue ClearColor{.float32 = {0.0f, 0.0f, 0.0f, 1.0f}};
+  TransitionImageLayout(
+    DepthImage,
+    VK_IMAGE_LAYOUT_UNDEFINED,
+    VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+    VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+    VK_IMAGE_ASPECT_DEPTH_BIT);
+
+  constexpr auto ClearColor = VkClearColorValue{{0.0f, 0.0f, 0.0f, 1.0f}};
+  constexpr auto ClearDepth = VkClearDepthStencilValue{1.0f, 0};
 
   const VkRenderingAttachmentInfo RenderingAttachmentInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1482,12 +1614,22 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     .clearValue = {ClearColor},
   };
 
+  const VkRenderingAttachmentInfo DepthAttachmentInfo = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .imageView = DepthImageView,
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+    .clearValue = {.depthStencil = ClearDepth},
+  };
+
   const VkRenderingInfo RenderingInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .renderArea = {.offset = {0, 0}, .extent = SwapChainExtent},
     .layerCount = 1,
     .colorAttachmentCount = 1,
     .pColorAttachments = &RenderingAttachmentInfo,
+    .pDepthAttachment = &DepthAttachmentInfo,
   };
 
   vkCmdBeginRendering(CommandBuffers[FrameIndex], &RenderingInfo);
@@ -1513,7 +1655,7 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
 
   constexpr VkDeviceSize Offsets[] = {0};
   vkCmdBindVertexBuffers(CommandBuffers[FrameIndex], 0, 1, &VertexBuffer, Offsets);
-  vkCmdBindIndexBuffer(CommandBuffers[FrameIndex], IndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+  vkCmdBindIndexBuffer(CommandBuffers[FrameIndex], IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
   vkCmdBindDescriptorSets(CommandBuffers[FrameIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipelineLayout, 0,
                           1, &DescriptorSets[FrameIndex], 0, nullptr);
@@ -1522,13 +1664,14 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
   vkCmdEndRendering(CommandBuffers[FrameIndex]);
 
   TransitionImageLayout(
-    ImageIndex,
+    SwapChainImages[ImageIndex],
     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
     {},
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-    VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT
+    VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
+    VK_IMAGE_ASPECT_COLOR_BIT
     );
 
   vk_verify(vkEndCommandBuffer(CommandBuffers[FrameIndex]));
@@ -1585,10 +1728,11 @@ void FVulkanTriangle::EndSingleTimeCommands(VkCommandBuffer &CommandBuffer) cons
 }
 
 
-void FVulkanTriangle::TransitionImageLayout(uint32_t ImageIndex, VkImageLayout OldLayout, VkImageLayout NewLayout,
+void FVulkanTriangle::TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout,
                                             VkAccessFlags2 SrcAccessMask, VkAccessFlags2 DstAccessMask,
                                             VkPipelineStageFlags2 SrcStageMask,
-                                            VkPipelineStageFlags2 DstStageMask) const {
+                                            VkPipelineStageFlags2 DstStageMask,
+                                            VkImageAspectFlags ImageAspectFlags) const {
   const VkImageMemoryBarrier2 Barrier = {
     .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
     .srcStageMask = SrcStageMask,
@@ -1599,9 +1743,9 @@ void FVulkanTriangle::TransitionImageLayout(uint32_t ImageIndex, VkImageLayout O
     .newLayout = NewLayout,
     .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
     .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-    .image = SwapChainImages[ImageIndex],
+    .image = Image,
     .subresourceRange = {
-      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+      .aspectMask = ImageAspectFlags,
       .baseMipLevel = 0,
       .levelCount = 1,
       .baseArrayLayer = 0,

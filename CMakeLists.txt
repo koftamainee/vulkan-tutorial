@@ -47,6 +47,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+FetchContent_Declare(
+        tinyobjloader
+        GIT_REPOSITORY https://github.com/tinyobjloader/tinyobjloader.git
+        GIT_TAG v2.0.0rc13
+)
+
+
+FetchContent_MakeAvailable(tinyobjloader)
+
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
@@ -117,4 +126,5 @@ target_link_libraries(vulkan PRIVATE
         Vulkan::Vulkan
         glfw
         glm::glm
+        tinyobjloader
 )
