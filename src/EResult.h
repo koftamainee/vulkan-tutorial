@@ -77,19 +77,6 @@ inline void FDebug_EnsureFailed(const char *Expr,
         } \
     } while(0)
 
-#if DO_CHECK
-#define verify(Expr) \
-        [&]() -> bool { \
-            if (!(Expr)) { \
-                FDebug_AssertFailed(#Expr, __FILE__, __LINE__); \
-                return false; \
-            } \
-            return true; \
-        }()
-#else
-#define verify(Expr) (!!(Expr))
-#endif
-
 
 #if DO_CHECK
 #define ensure(Expr) \
@@ -105,8 +92,8 @@ inline void FDebug_EnsureFailed(const char *Expr,
 #endif
 
 
-#define vk_check(VkCall) \
+#define vk_verify(VkCall) \
     do { \
         const VkResult _VkResult = (VkCall); \
-        checkf(_VkResult == VK_SUCCESS, "VkResult != VK_SUCCESS"); \
+        fatal(_VkResult != VK_SUCCESS, "VkResult != VK_SUCCESS"); \
     } while(0)

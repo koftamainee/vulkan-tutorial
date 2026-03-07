@@ -2,7 +2,6 @@
 
 #include <cassert>
 #include <chrono>
-#include <cstring>
 #include <iostream>
 #include <map>
 #include <set>
@@ -11,6 +10,9 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 namespace {
   VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT Severity,
@@ -113,7 +115,7 @@ void FVulkanTriangle::MainLoop() {
     }
   }
 
-  vk_check(vkDeviceWaitIdle(Device));
+  vk_verify(vkDeviceWaitIdle(Device));
 }
 
 void FVulkanTriangle::InitWindow() {
@@ -217,7 +219,7 @@ void FVulkanTriangle::CreateInstance() {
     CreateInfo.ppEnabledLayerNames = ValidationLayers.data();
   }
 
-  vk_check(vkCreateInstance(&CreateInfo, nullptr, &Instance));
+  vk_verify(vkCreateInstance(&CreateInfo, nullptr, &Instance));
 }
 
 std::vector<const char *> FVulkanTriangle::GetRequiredInstanceExtensions() {
@@ -227,10 +229,10 @@ std::vector<const char *> FVulkanTriangle::GetRequiredInstanceExtensions() {
 
 
   uint32_t VkExtensionsCount = 0;
-  vk_check(vkEnumerateInstanceExtensionProperties(nullptr, &VkExtensionsCount, nullptr));
+  vk_verify(vkEnumerateInstanceExtensionProperties(nullptr, &VkExtensionsCount, nullptr));
 
   std::vector<VkExtensionProperties> VkExtensions(VkExtensionsCount);
-  vk_check(vkEnumerateInstanceExtensionProperties(nullptr, &VkExtensionsCount, VkExtensions.data()));
+  vk_verify(vkEnumerateInstanceExtensionProperties(nullptr, &VkExtensionsCount, VkExtensions.data()));
 
 
   for (uint32_t i = 0; i < GLFWExtensionsCount; ++i) {
@@ -267,16 +269,16 @@ void FVulkanTriangle::CreateDebugMessenger() {
 
   const VkDebugUtilsMessengerCreateInfoEXT CreateInfo = MakeDebugUtilsMessengerCreateInfo();
 
-  vk_check(vkCreateDebugUtilsMessenger(Instance, &CreateInfo, nullptr, &DebugMessenger));
+  vk_verify(vkCreateDebugUtilsMessenger(Instance, &CreateInfo, nullptr, &DebugMessenger));
 
 }
 
 void FVulkanTriangle::ValidateLayers() {
   uint32_t vkLayerPropertiesCount = 0;
-  vk_check(vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, nullptr));
+  vk_verify(vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, nullptr));
 
   std::vector<VkLayerProperties> VkLayers(vkLayerPropertiesCount);
-  vk_check(vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, VkLayers.data()));
+  vk_verify(vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, VkLayers.data()));
 
   for (auto const NeededLayer : ValidationLayers) {
     bool Found = false;
@@ -330,10 +332,10 @@ void FVulkanTriangle::DestroySurface() {
 void FVulkanTriangle::CreatePhysicalDevice() {
   check(Instance != VK_NULL_HANDLE);
   uint32_t PhysicalDevicesCount = 0;
-  vk_check(vkEnumeratePhysicalDevices(Instance, &PhysicalDevicesCount, nullptr));
+  vk_verify(vkEnumeratePhysicalDevices(Instance, &PhysicalDevicesCount, nullptr));
 
   std::vector<VkPhysicalDevice> PhysicalDevices(PhysicalDevicesCount);
-  vk_check(vkEnumeratePhysicalDevices(Instance, &PhysicalDevicesCount, PhysicalDevices.data()));
+  vk_verify(vkEnumeratePhysicalDevices(Instance, &PhysicalDevicesCount, PhysicalDevices.data()));
 
   PhysicalDevice = PickPhysicalDevice(PhysicalDevices, Surface);
 }
@@ -372,9 +374,9 @@ VkPhysicalDevice FVulkanTriangle::PickPhysicalDevice(
     }
 
     uint32_t ExtensionCount = 0;
-    vk_check(vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount, nullptr));
+    vk_verify(vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount, nullptr));
     std::vector<VkExtensionProperties> AvailableExtensions(ExtensionCount);
-    vk_check(vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount,
+    vk_verify(vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &ExtensionCount,
       AvailableExtensions.data()));
 
 
@@ -397,10 +399,10 @@ VkPhysicalDevice FVulkanTriangle::PickPhysicalDevice(
     }
 
     uint32_t FormatCount = 0;
-    vk_check(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatCount, nullptr));
+    vk_verify(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatCount, nullptr));
 
     uint32_t PresentModeCount = 0;
-    vk_check(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModeCount, nullptr));
+    vk_verify(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModeCount, nullptr));
 
     if (FormatCount == 0 || PresentModeCount == 0) {
       continue;
@@ -485,7 +487,7 @@ void FVulkanTriangle::CreateLogicalDevice() {
     .ppEnabledExtensionNames = DeviceExtensions.data(),
   };
 
-  vk_check(vkCreateDevice(PhysicalDevice, &DeviceCreateInfo, nullptr, &Device));
+  vk_verify(vkCreateDevice(PhysicalDevice, &DeviceCreateInfo, nullptr, &Device));
 
   vkGetDeviceQueue(Device, QueueIndices.GraphicsFamily, 0, &GraphicsQueue);
   vkGetDeviceQueue(Device, QueueIndices.PresentFamily, 0, &PresentQueue);
@@ -560,19 +562,19 @@ void FVulkanTriangle::CreateSwapChain() {
   check(Device != VK_NULL_HANDLE);
 
   VkSurfaceCapabilitiesKHR Capabilities;
-  vk_check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(PhysicalDevice, Surface, &Capabilities));
+  vk_verify(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(PhysicalDevice, Surface, &Capabilities));
 
   uint32_t FormatsCount = 0;
-  vk_check(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatsCount, nullptr));
+  vk_verify(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatsCount, nullptr));
 
   std::vector<VkSurfaceFormatKHR> Formats(FormatsCount);
-  vk_check(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatsCount, Formats.data()));
+  vk_verify(vkGetPhysicalDeviceSurfaceFormatsKHR(PhysicalDevice, Surface, &FormatsCount, Formats.data()));
 
   uint32_t PresentModesCount = 0;
-  vk_check(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModesCount, nullptr));
+  vk_verify(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModesCount, nullptr));
 
   std::vector<VkPresentModeKHR> PresentModes(PresentModesCount);
-  vk_check(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModesCount,
+  vk_verify(vkGetPhysicalDeviceSurfacePresentModesKHR(PhysicalDevice, Surface, &PresentModesCount,
     PresentModes.data()));
 
   SwapChainSurfaceFormat = PickSwapChainSurfaceFormat(Formats);
@@ -611,13 +613,13 @@ void FVulkanTriangle::CreateSwapChain() {
     SwapChainCreateInfo.pQueueFamilyIndices = QueueFamilyIndicesArray.data();
   }
 
-  vk_check(vkCreateSwapchainKHR(Device, &SwapChainCreateInfo, nullptr, &SwapChain));
+  vk_verify(vkCreateSwapchainKHR(Device, &SwapChainCreateInfo, nullptr, &SwapChain));
 
   uint32_t SwapChainImageCount = 0;
-  vk_check(vkGetSwapchainImagesKHR(Device, SwapChain, &SwapChainImageCount, nullptr));
+  vk_verify(vkGetSwapchainImagesKHR(Device, SwapChain, &SwapChainImageCount, nullptr));
 
   SwapChainImages.resize(SwapChainImageCount);
-  vk_check(vkGetSwapchainImagesKHR(Device, SwapChain, &SwapChainImageCount, SwapChainImages.data()));
+  vk_verify(vkGetSwapchainImagesKHR(Device, SwapChain, &SwapChainImageCount, SwapChainImages.data()));
 }
 
 VkSurfaceFormatKHR FVulkanTriangle::PickSwapChainSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &Formats) {
@@ -672,7 +674,7 @@ void FVulkanTriangle::DestroySwapChain() {
 
 void FVulkanTriangle::RecreateSwapChain() {
   check(Device != VK_NULL_HANDLE);
-  vk_check(vkDeviceWaitIdle(Device));
+  vk_verify(vkDeviceWaitIdle(Device));
   int Width = 0, Height = 0;
   glfwGetFramebufferSize(Window, &Width, &Height);
 
@@ -725,7 +727,7 @@ void FVulkanTriangle::CreateDescriptorSetLayout() {
     .pBindings = Bindings.data(),
   };
 
-  vk_check(vkCreateDescriptorSetLayout(Device, &DescriptorSetLayoutCreateInfo, nullptr, &DescriptorSetLayout));
+  vk_verify(vkCreateDescriptorSetLayout(Device, &DescriptorSetLayoutCreateInfo, nullptr, &DescriptorSetLayout));
 
 }
 
@@ -836,7 +838,7 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
     .pushConstantRangeCount = 0,
   };
 
-  vk_check(vkCreatePipelineLayout(Device, &LayoutCreateInfo, nullptr, &GraphicsPipelineLayout));
+  vk_verify(vkCreatePipelineLayout(Device, &LayoutCreateInfo, nullptr, &GraphicsPipelineLayout));
 
   const VkPipelineRenderingCreateInfo RenderingCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
@@ -860,7 +862,7 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
     .renderPass = nullptr,
   };
 
-  vk_check(vkCreateGraphicsPipelines(Device, VK_NULL_HANDLE, 1, &GraphicsPipelineCreateInfo, nullptr,
+  vk_verify(vkCreateGraphicsPipelines(Device, VK_NULL_HANDLE, 1, &GraphicsPipelineCreateInfo, nullptr,
     &GraphicsPipeline));
 
   DestroyShaderModule(ShaderModule);
@@ -875,7 +877,7 @@ VkShaderModule FVulkanTriangle::CreateShaderModule(const std::vector<char> &Shad
   };
 
   VkShaderModule ShaderModule = VK_NULL_HANDLE;
-  vk_check(vkCreateShaderModule(Device, &ShaderModuleCreateInfo, nullptr, &ShaderModule));
+  vk_verify(vkCreateShaderModule(Device, &ShaderModuleCreateInfo, nullptr, &ShaderModule));
   return ShaderModule;
 }
 
@@ -906,7 +908,7 @@ void FVulkanTriangle::CreateCommandPool() {
     .queueFamilyIndex = QueueFamilyIndices.GraphicsFamily,
   };
 
-  vk_check(vkCreateCommandPool(Device, &CommandPoolCreateInfo, nullptr, &CommandPool));
+  vk_verify(vkCreateCommandPool(Device, &CommandPoolCreateInfo, nullptr, &CommandPool));
 }
 
 void FVulkanTriangle::DestroyCommandPool() {
@@ -936,7 +938,7 @@ void FVulkanTriangle::CreateTextureImage() {
   auto [StagingBuffer, StagingMemory] = CreateBuffer(ImageSize, StagingUsage, StagingProperties);
 
   void *Data = nullptr;
-  vk_check(vkMapMemory(Device, StagingMemory, 0, ImageSize, 0, &Data));
+  vk_verify(vkMapMemory(Device, StagingMemory, 0, ImageSize, 0, &Data));
   memcpy(Data, Pixels, ImageSize);
   vkUnmapMemory(Device, StagingMemory);
   stbi_image_free(Pixels);
@@ -978,7 +980,7 @@ std::pair<VkImage, VkDeviceMemory> FVulkanTriangle::CreateImage(uint32_t Width, 
 
   VkImage Image = VK_NULL_HANDLE;
   VkDeviceMemory Memory = VK_NULL_HANDLE;
-  vk_check(vkCreateImage(Device, &ImageCreateInfo, nullptr, &Image));
+  vk_verify(vkCreateImage(Device, &ImageCreateInfo, nullptr, &Image));
   VkMemoryRequirements MemoryRequirements{};
   vkGetImageMemoryRequirements(Device, Image, &MemoryRequirements);
 
@@ -988,8 +990,8 @@ std::pair<VkImage, VkDeviceMemory> FVulkanTriangle::CreateImage(uint32_t Width, 
     .memoryTypeIndex = FindMemoryType(MemoryRequirements.memoryTypeBits, Properties),
   };
 
-  vk_check(vkAllocateMemory(Device, &MemoryAllocateInfo, nullptr, &Memory));
-  vk_check(vkBindImageMemory(Device, Image, Memory, 0));
+  vk_verify(vkAllocateMemory(Device, &MemoryAllocateInfo, nullptr, &Memory));
+  vk_verify(vkBindImageMemory(Device, Image, Memory, 0));
 
   return {Image, Memory};
 }
@@ -1090,7 +1092,7 @@ VkImageView FVulkanTriangle::CreateImageView(VkImage Image, VkFormat Format) con
   };
 
   VkImageView ImageView = VK_NULL_HANDLE;
-  vk_check(vkCreateImageView(Device, &ImageViewCreateInfo, nullptr, &ImageView));
+  vk_verify(vkCreateImageView(Device, &ImageViewCreateInfo, nullptr, &ImageView));
 
   return ImageView;
 }
@@ -1138,7 +1140,7 @@ void FVulkanTriangle::CreateTextureSampler() {
     .unnormalizedCoordinates = VK_FALSE,
   };
 
-  vk_check(vkCreateSampler(Device, &TextureSamplerCreateInfo, nullptr, &TextureSampler));
+  vk_verify(vkCreateSampler(Device, &TextureSamplerCreateInfo, nullptr, &TextureSampler));
 }
 
 void FVulkanTriangle::DestroyTextureSampler() {
@@ -1167,7 +1169,7 @@ void FVulkanTriangle::CreateVertexBuffer() {
   std::tie(VertexBuffer, VertexBufferMemory) = CreateBuffer(BufferSize, VertexUsage, VertexProperties);
 
   void *data;
-  vk_check(vkMapMemory(Device, StagingBufferMemory, 0, BufferSize, 0, &data));
+  vk_verify(vkMapMemory(Device, StagingBufferMemory, 0, BufferSize, 0, &data));
   memcpy(data, Vertices.data(), BufferSize);
   vkUnmapMemory(Device, StagingBufferMemory);
 
@@ -1188,7 +1190,7 @@ std::pair<VkBuffer, VkDeviceMemory> FVulkanTriangle::CreateBuffer(VkDeviceSize S
 
   VkBuffer Buffer = VK_NULL_HANDLE;
   VkDeviceMemory Memory = VK_NULL_HANDLE;
-  vk_check(vkCreateBuffer(Device, &BufferCreateInfo, nullptr, &Buffer));
+  vk_verify(vkCreateBuffer(Device, &BufferCreateInfo, nullptr, &Buffer));
 
   VkMemoryRequirements MemoryRequirements;
   vkGetBufferMemoryRequirements(Device, Buffer, &MemoryRequirements);
@@ -1200,8 +1202,8 @@ std::pair<VkBuffer, VkDeviceMemory> FVulkanTriangle::CreateBuffer(VkDeviceSize S
     .memoryTypeIndex = FindMemoryType(MemoryRequirements.memoryTypeBits, Properties),
   };
 
-  vk_check(vkAllocateMemory(Device, &MemoryAllocateInfo, nullptr, &Memory));
-  vk_check(vkBindBufferMemory(Device, Buffer, Memory, 0));
+  vk_verify(vkAllocateMemory(Device, &MemoryAllocateInfo, nullptr, &Memory));
+  vk_verify(vkBindBufferMemory(Device, Buffer, Memory, 0));
 
   return {Buffer, Memory};
 }
@@ -1275,7 +1277,7 @@ void FVulkanTriangle::CreateIndexBuffer() {
   std::tie(IndexBuffer, IndexBufferMemory) = CreateBuffer(BufferSize, IndexUsage, IndexProperties);
 
   void *data;
-  vk_check(vkMapMemory(Device, StagingBufferMemory, 0, BufferSize, 0, &data));
+  vk_verify(vkMapMemory(Device, StagingBufferMemory, 0, BufferSize, 0, &data));
   memcpy(data, Indices.data(), BufferSize);
   vkUnmapMemory(Device, StagingBufferMemory);
 
@@ -1301,7 +1303,7 @@ void FVulkanTriangle::CreateUniformBuffer() {
       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     auto [Buffer, Memory] = CreateBuffer(BufferSize, Usage, Properties);
     void *Mapped;
-    vk_check(vkMapMemory(Device, Memory, 0, BufferSize, 0, &Mapped));
+    vk_verify(vkMapMemory(Device, Memory, 0, BufferSize, 0, &Mapped));
 
     UniformBuffers.emplace_back(Buffer);
     UniformBuffersMemory.emplace_back(Memory);
@@ -1362,7 +1364,7 @@ void FVulkanTriangle::CreateDescriptorPool() {
     .pPoolSizes = PoolSize.data(),
   };
 
-  vk_check(vkCreateDescriptorPool(Device, &DescriptorPoolCreateInfo, nullptr, &DescriptorPool));
+  vk_verify(vkCreateDescriptorPool(Device, &DescriptorPoolCreateInfo, nullptr, &DescriptorPool));
 }
 
 void FVulkanTriangle::DestroyDescriptorPool() {
@@ -1385,7 +1387,7 @@ void FVulkanTriangle::CreateDescriptorSets() {
   };
 
   DescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-  vk_check(vkAllocateDescriptorSets(Device, &DescriptorSetAllocateInfo, DescriptorSets.data()));
+  vk_verify(vkAllocateDescriptorSets(Device, &DescriptorSetAllocateInfo, DescriptorSets.data()));
 
   for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     const VkDescriptorBufferInfo BufferInfo{
@@ -1446,7 +1448,7 @@ void FVulkanTriangle::CreateCommandBuffers() {
     .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
   };
 
-  vk_check(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, CommandBuffers.data()));
+  vk_verify(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, CommandBuffers.data()));
 }
 
 void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
@@ -1458,7 +1460,7 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
   };
 
-  vk_check(vkBeginCommandBuffer(CommandBuffers[FrameIndex], &BeginInfo));
+  vk_verify(vkBeginCommandBuffer(CommandBuffers[FrameIndex], &BeginInfo));
 
   TransitionImageLayout(
     ImageIndex,
@@ -1529,7 +1531,7 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT
     );
 
-  vk_check(vkEndCommandBuffer(CommandBuffers[FrameIndex]));
+  vk_verify(vkEndCommandBuffer(CommandBuffers[FrameIndex]));
 }
 
 void FVulkanTriangle::DestroyCommandBuffers() {
@@ -1550,13 +1552,13 @@ VkCommandBuffer FVulkanTriangle::BeginSingleTimeCommands() const {
     .commandBufferCount = 1,
   };
   VkCommandBuffer Buffer;
-  vk_check(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, &Buffer));
+  vk_verify(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, &Buffer));
   constexpr VkCommandBufferBeginInfo CommandBufferBeginInfo = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
   };
 
-  vk_check(vkBeginCommandBuffer(Buffer, &CommandBufferBeginInfo));
+  vk_verify(vkBeginCommandBuffer(Buffer, &CommandBufferBeginInfo));
 
   return Buffer;
 }
@@ -1567,15 +1569,15 @@ void FVulkanTriangle::EndSingleTimeCommands(VkCommandBuffer &CommandBuffer) cons
     check(GraphicsQueue != VK_NULL_HANDLE);
     check(CommandPool != VK_NULL_HANDLE);
 
-    vk_check(vkEndCommandBuffer(CommandBuffer));
+    vk_verify(vkEndCommandBuffer(CommandBuffer));
 
     const VkSubmitInfo SubmitInfo = {
       .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
       .commandBufferCount = 1,
       .pCommandBuffers = &CommandBuffer,
     };
-    vk_check(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, nullptr));
-    vk_check(vkQueueWaitIdle(GraphicsQueue));
+    vk_verify(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, nullptr));
+    vk_verify(vkQueueWaitIdle(GraphicsQueue));
 
     vkFreeCommandBuffers(Device, CommandPool, 1, &CommandBuffer);
     CommandBuffer = VK_NULL_HANDLE;
@@ -1633,16 +1635,16 @@ void FVulkanTriangle::CreateSyncObjects() {
 
   RenderCompleteSemaphores.resize(SwapChainImages.size());
   for (auto &Semaphore : RenderCompleteSemaphores) {
-    vk_check(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &Semaphore));
+    vk_verify(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &Semaphore));
   }
   PresentCompleteSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
   for (auto &Semaphore : PresentCompleteSemaphores) {
-    vk_check(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &Semaphore));
+    vk_verify(vkCreateSemaphore(Device, &SemaphoreCreateInfo, nullptr, &Semaphore));
   }
 
   InFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
   for (auto &Fence : InFlightFences) {
-    vk_check(vkCreateFence(Device, &FenceCreateInfo, nullptr, &Fence));
+    vk_verify(vkCreateFence(Device, &FenceCreateInfo, nullptr, &Fence));
   }
 }
 
@@ -1672,7 +1674,7 @@ EResult FVulkanTriangle::DrawFrame() {
   check(!RenderCompleteSemaphores.empty());
   check(SwapChain != VK_NULL_HANDLE);
 
-  vk_check(vkWaitForFences(Device, 1, &InFlightFences[FrameIndex],VK_TRUE, UINT64_MAX));
+  vk_verify(vkWaitForFences(Device, 1, &InFlightFences[FrameIndex],VK_TRUE, UINT64_MAX));
 
   if (bFramebufferResized) {
     RecreateSwapChain();
@@ -1690,11 +1692,11 @@ EResult FVulkanTriangle::DrawFrame() {
     RecreateSwapChain();
     return EResult::SwapChainSuboptimal;
   }
-  vk_check(AcquireResult);
+  vk_verify(AcquireResult);
 
   RecordCommandBuffer(ImageIndex);
 
-  vk_check(vkResetFences(Device, 1, &InFlightFences[FrameIndex]));
+  vk_verify(vkResetFences(Device, 1, &InFlightFences[FrameIndex]));
 
   UpdateUniformBuffer(FrameIndex);
 
@@ -1711,7 +1713,7 @@ EResult FVulkanTriangle::DrawFrame() {
   };
 
 
-  vk_check(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, InFlightFences[FrameIndex]));
+  vk_verify(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, InFlightFences[FrameIndex]));
 
   const VkPresentInfoKHR PresentInfo = {
     .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -1727,7 +1729,7 @@ EResult FVulkanTriangle::DrawFrame() {
     RecreateSwapChain();
     return EResult::SwapChainSuboptimal;
   }
-  vk_check(PresentResult);
+  vk_verify(PresentResult);
 
   FrameIndex = (FrameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 

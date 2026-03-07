@@ -6,10 +6,6 @@
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-
-
 #include <vulkan/vulkan.h>
 
 #include <memory>
