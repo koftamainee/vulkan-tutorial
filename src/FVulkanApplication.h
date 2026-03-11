@@ -96,6 +96,7 @@ private:
 
   void CreatePhysicalDevice();
   static VkPhysicalDevice PickPhysicalDevice(const std::vector<VkPhysicalDevice> &Devices, VkSurfaceKHR Surface);
+  static VkSampleCountFlagBits GetMaxUsableSampleCount(VkPhysicalDevice physicalDevice);
   void DestroyPhysicalDevice();
 
   void CreateLogicalDevice();
@@ -131,8 +132,8 @@ private:
   void DestroyDepthResources();
 
   void CreateTextureImage();
-  std::pair<VkImage, VkDeviceMemory> CreateImage(uint32_t Width, uint32_t Height, uint32_t mipLevels, VkFormat Format,
-                                                 VkImageTiling Tiling, VkImageUsageFlags Usage, VkMemoryPropertyFlags Properties) const;
+  std::pair<VkImage, VkDeviceMemory> CreateImage(uint32_t Width, uint32_t Height, uint32_t mipLevels, VkSampleCountFlagBits numSamples,
+                                                 VkFormat Format, VkImageTiling Tiling, VkImageUsageFlags Usage, VkMemoryPropertyFlags Properties) const;
   void DestroyImage(VkImage Image, VkDeviceMemory Memory) const;
   void TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout, uint32_t mipLevels) const;
   void CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t Width, uint32_t Height) const;
@@ -148,6 +149,9 @@ private:
 
   void CreateTextureSampler();
   void DestroyTextureSampler();
+
+  void CreateColorResources();
+  void DestroyColorResources();
 
   void LoadModel();
 
@@ -277,7 +281,12 @@ private:
   VkDeviceMemory DepthImageMemory = VK_NULL_HANDLE;
   VkImageView DepthImageView = VK_NULL_HANDLE;
 
+  VkImage ColorImage = VK_NULL_HANDLE;
+  VkDeviceMemory ColorImageMemory = VK_NULL_HANDLE;
+  VkImageView ColorImageView = VK_NULL_HANDLE;
+
   VkSampler TextureSampler = VK_NULL_HANDLE;
+  VkSampleCountFlagBits MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 
   FQueueFamilyIndices QueueFamilyIndices{};
 

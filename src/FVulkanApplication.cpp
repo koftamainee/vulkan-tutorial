@@ -168,6 +168,7 @@ void FVulkanApplication::InitVulkan() {
   CreateDescriptorSetLayout();
   CreateGraphicsPipeline();
   CreateCommandPool();
+  CreateColorResources();
   CreateDepthResources();
   CreateTextureImage();
   CreateTextureImageView();
@@ -194,6 +195,7 @@ void FVulkanApplication::DeinitVulkan() {
   DestroyTextureImageView();
   DestroyTextureImage();
   DestroyDepthResources();
+  DestroyColorResources();
   DestroyCommandPool();
   DestroyGraphicsPipeline();
   DestroyDescriptorSetLayout();
@@ -357,6 +359,7 @@ void FVulkanApplication::CreatePhysicalDevice() {
   vk_verify(vkEnumeratePhysicalDevices(Instance, &PhysicalDevicesCount, PhysicalDevices.data()));
 
   PhysicalDevice = PickPhysicalDevice(PhysicalDevices, Surface);
+  MSAASamples = GetMaxUsableSampleCount(PhysicalDevice);
 }
 
 VkPhysicalDevice FVulkanApplication::PickPhysicalDevice(
@@ -447,6 +450,24 @@ VkPhysicalDevice FVulkanApplication::PickPhysicalDevice(
   fatal(PhysicalDevicesRanked.rbegin()->first <= 0, "Supported GPU device does not exits");
 
   return PhysicalDevicesRanked.rbegin()->second;
+}
+
+VkSampleCountFlagBits FVulkanApplication::GetMaxUsableSampleCount(VkPhysicalDevice physicalDevice) {
+  check(physicalDevice != VK_NULL_HANDLE);
+  VkPhysicalDeviceProperties Properties;
+  vkGetPhysicalDeviceProperties(physicalDevice, &Properties);
+  const auto samples = static_cast<VkSampleCountFlagBits>(Properties.limits.framebufferColorSampleCounts & Properties.
+    limits.
+    framebufferDepthSampleCounts);
+  if (samples & VK_SAMPLE_COUNT_64_BIT) { return VK_SAMPLE_COUNT_64_BIT; }
+  if (samples & VK_SAMPLE_COUNT_32_BIT) { return VK_SAMPLE_COUNT_32_BIT; }
+  if (samples & VK_SAMPLE_COUNT_16_BIT) { return VK_SAMPLE_COUNT_16_BIT; }
+  if (samples & VK_SAMPLE_COUNT_8_BIT) { return VK_SAMPLE_COUNT_8_BIT; }
+  if (samples & VK_SAMPLE_COUNT_4_BIT) { return VK_SAMPLE_COUNT_4_BIT; }
+  if (samples & VK_SAMPLE_COUNT_2_BIT) { return VK_SAMPLE_COUNT_2_BIT; }
+
+  return VK_SAMPLE_COUNT_1_BIT;
+
 }
 
 void FVulkanApplication::DestroyPhysicalDevice() {
@@ -703,11 +724,13 @@ void FVulkanApplication::RecreateSwapChain() {
   }
 
   DestroyDepthResources();
+  DestroyColorResources();
   DestroyImageViews();
   DestroySwapChain();
 
   CreateSwapChain();
   CreateImageViews();
+  CreateColorResources();
   CreateDepthResources();
   bFramebufferResized = false;
 }
@@ -832,9 +855,9 @@ void FVulkanApplication::CreateGraphicsPipeline() {
     .lineWidth = 1.0f,
   };
 
-  constexpr VkPipelineMultisampleStateCreateInfo MultisampleStateCreateInfo = {
+  const VkPipelineMultisampleStateCreateInfo MultisampleStateCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-    .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+    .rasterizationSamples = MSAASamples,
     .sampleShadingEnable = VK_FALSE,
   };
 
@@ -957,6 +980,7 @@ void FVulkanApplication::CreateDepthResources() {
   const VkFormat DepthFormat = FindDepthFormat();
 
   std::tie(DepthImage, DepthImageMemory) = CreateImage(SwapChainExtent.width, SwapChainExtent.height, 1,
+                                                       MSAASamples,
                                                        DepthFormat,
                                                        VK_IMAGE_TILING_OPTIMAL,
                                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -1040,8 +1064,9 @@ void FVulkanApplication::CreateTextureImage() {
     VK_IMAGE_USAGE_SAMPLED_BIT;
   constexpr VkMemoryPropertyFlags ImageMemoryProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
-  std::tie(TextureImage, TextureImageMemory) = CreateImage(TextureWidth, TextureHeight, MipLevels, ImageFormat,
-                                                           ImageTiling, ImageUsage, ImageMemoryProperties);
+  std::tie(TextureImage, TextureImageMemory) = CreateImage(TextureWidth, TextureHeight, MipLevels,
+                                                           VK_SAMPLE_COUNT_1_BIT,
+                                                           ImageFormat, ImageTiling, ImageUsage, ImageMemoryProperties);
 
   TransitionImageLayout(TextureImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, MipLevels);
 
@@ -1053,7 +1078,8 @@ void FVulkanApplication::CreateTextureImage() {
 }
 
 std::pair<VkImage, VkDeviceMemory> FVulkanApplication::CreateImage(uint32_t Width, uint32_t Height, uint32_t mipLevels,
-                                                                   VkFormat Format, VkImageTiling Tiling,
+                                                                   VkSampleCountFlagBits numSamples, VkFormat Format,
+                                                                   VkImageTiling Tiling,
                                                                    VkImageUsageFlags Usage,
                                                                    VkMemoryPropertyFlags Properties) const {
   check(Device != VK_NULL_HANDLE);
@@ -1064,7 +1090,7 @@ std::pair<VkImage, VkDeviceMemory> FVulkanApplication::CreateImage(uint32_t Widt
     .extent = {Width, Height, 1},
     .mipLevels = mipLevels,
     .arrayLayers = 1,
-    .samples = VK_SAMPLE_COUNT_1_BIT,
+    .samples = numSamples,
     .tiling = Tiling,
     .usage = Usage,
     .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -1338,6 +1364,33 @@ void FVulkanApplication::DestroyTextureSampler() {
     check(Device != VK_NULL_HANDLE);
     vkDestroySampler(Device, TextureSampler, nullptr);
     TextureSampler = VK_NULL_HANDLE;
+  }
+}
+
+void FVulkanApplication::CreateColorResources() {
+  const VkFormat format = SwapChainSurfaceFormat.format;
+
+  std::tie(ColorImage, ColorImageMemory) = CreateImage(SwapChainExtent.width, SwapChainExtent.height,
+                                                       1, MSAASamples,
+                                                       format, VK_IMAGE_TILING_OPTIMAL,
+                                                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                                       VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                                                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+  ColorImageView = CreateImageView(ColorImage, format, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+}
+
+void FVulkanApplication::DestroyColorResources() {
+  if (ColorImageView != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    DestroyImageView(ColorImageView);
+    ColorImageView = VK_NULL_HANDLE;
+  }
+  if (ColorImageMemory != VK_NULL_HANDLE || ColorImage != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    DestroyImage(ColorImage, ColorImageMemory);
+    ColorImage = VK_NULL_HANDLE;
+    ColorImageMemory = VK_NULL_HANDLE;
   }
 }
 
@@ -1694,6 +1747,17 @@ void FVulkanApplication::RecordCommandBuffer(uint32_t ImageIndex) const {
     VK_IMAGE_ASPECT_COLOR_BIT, 1);
 
   TransitionImageLayout(
+    ColorImage,
+    VK_IMAGE_LAYOUT_UNDEFINED,
+    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+    VK_IMAGE_ASPECT_COLOR_BIT, 1
+    );
+
+  TransitionImageLayout(
     DepthImage,
     VK_IMAGE_LAYOUT_UNDEFINED,
     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
@@ -1706,10 +1770,13 @@ void FVulkanApplication::RecordCommandBuffer(uint32_t ImageIndex) const {
   constexpr auto ClearColor = VkClearColorValue{{0.0f, 0.0f, 0.0f, 1.0f}};
   constexpr auto ClearDepth = VkClearDepthStencilValue{1.0f, 0};
 
-  const VkRenderingAttachmentInfo RenderingAttachmentInfo = {
+  const VkRenderingAttachmentInfo colorAttachmentInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .imageView = SwapChainImageViews[ImageIndex],
+    .imageView = ColorImageView,
     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT,
+    .resolveImageView = SwapChainImageViews[ImageIndex],
+    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = {ClearColor},
@@ -1729,7 +1796,7 @@ void FVulkanApplication::RecordCommandBuffer(uint32_t ImageIndex) const {
     .renderArea = {.offset = {0, 0}, .extent = SwapChainExtent},
     .layerCount = 1,
     .colorAttachmentCount = 1,
-    .pColorAttachments = &RenderingAttachmentInfo,
+    .pColorAttachments = &colorAttachmentInfo,
     .pDepthAttachment = &DepthAttachmentInfo,
   };
 
