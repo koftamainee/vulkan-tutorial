@@ -15,15 +15,15 @@
 
 #include "EResult.h"
 
-class FVulkanTriangle final {
+class FVulkanApplication final {
 public:
-  FVulkanTriangle() = default;
-  ~FVulkanTriangle();
+  FVulkanApplication() = default;
+  ~FVulkanApplication();
 
-  FVulkanTriangle(const FVulkanTriangle &) = delete;
-  FVulkanTriangle &operator=(const FVulkanTriangle &) = delete;
-  FVulkanTriangle(FVulkanTriangle &&) noexcept = delete;
-  FVulkanTriangle &operator=(FVulkanTriangle &&) noexcept = delete;
+  FVulkanApplication(const FVulkanApplication &) = delete;
+  FVulkanApplication &operator=(const FVulkanApplication &) = delete;
+  FVulkanApplication(FVulkanApplication &&) noexcept = delete;
+  FVulkanApplication &operator=(FVulkanApplication &&) noexcept = delete;
 
   void Init(std::string &&InApplicationName, int InWindowWidth, int InWindowHeight);
   void Destroy();
@@ -65,7 +65,7 @@ private:
     }
   };
 
-  friend class std::hash<FVulkanTriangle::FVertex>;
+  friend class std::hash<FVulkanApplication::FVertex>;
 
   struct FUniformBufferObject {
     alignas(16) glm::mat4 Model;
@@ -131,14 +131,16 @@ private:
   void DestroyDepthResources();
 
   void CreateTextureImage();
-  std::pair<VkImage, VkDeviceMemory> CreateImage(uint32_t Width, uint32_t Height, VkFormat Format, VkImageTiling Tiling,
-                                                 VkImageUsageFlags Usage, VkMemoryPropertyFlags Properties) const;
+  std::pair<VkImage, VkDeviceMemory> CreateImage(uint32_t Width, uint32_t Height, uint32_t mipLevels, VkFormat Format,
+                                                 VkImageTiling Tiling, VkImageUsageFlags Usage, VkMemoryPropertyFlags Properties) const;
   void DestroyImage(VkImage Image, VkDeviceMemory Memory) const;
-  void TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout) const;
+  void TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout, uint32_t mipLevels) const;
   void CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t Width, uint32_t Height) const;
   void DestroyTextureImage();
 
-  VkImageView CreateImageView(VkImage Image, VkFormat Format, VkImageAspectFlags AspectFlags) const;
+  void GenerateMipMaps(VkImage Image, VkFormat ImageFormat, int32_t TextureWidth, int32_t TextureHeight, uint32_t mipLevels) const;
+
+  VkImageView CreateImageView(VkImage Image, VkFormat Format, VkImageAspectFlags AspectFlags, uint32_t mipLevels) const;
   void DestroyImageView(VkImageView ImageView) const;
 
   void CreateTextureImageView();
@@ -185,7 +187,7 @@ private:
     VkAccessFlags2 DstAccessMask,
     VkPipelineStageFlags2 SrcStageMask,
     VkPipelineStageFlags2 DstStageMask,
-    VkImageAspectFlags ImageAspectFlags) const;
+    VkImageAspectFlags ImageAspectFlags, uint32_t mipLevels) const;
 
   void CreateSyncObjects();
   void DestroySyncObjects();
@@ -266,6 +268,7 @@ private:
   std::vector<VkSemaphore> RenderCompleteSemaphores{};
   std::vector<VkFence> InFlightFences{};
 
+  uint32_t MipLevels = 1;
   VkImage TextureImage = VK_NULL_HANDLE;
   VkDeviceMemory TextureImageMemory = VK_NULL_HANDLE;
   VkImageView TextureImageView = VK_NULL_HANDLE;

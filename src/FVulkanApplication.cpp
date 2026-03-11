@@ -1,4 +1,4 @@
-#include "FVulkanTriangle.h"
+#include "FVulkanApplication.h"
 
 #include <cassert>
 #include <chrono>
@@ -22,8 +22,8 @@
 
 
 template <>
-struct std::hash<FVulkanTriangle::FVertex> {
-  size_t operator()(FVulkanTriangle::FVertex const &Vertex) const noexcept {
+struct std::hash<FVulkanApplication::FVertex> {
+  size_t operator()(FVulkanApplication::FVertex const &Vertex) const noexcept {
     return ((hash<glm::vec3>()(Vertex.Position) ^
         (hash<glm::vec3>()(Vertex.Color) << 1)) >> 1) ^
       (hash<glm::vec2>()(Vertex.TexCoord) << 1);
@@ -88,14 +88,14 @@ namespace {
   }
 }
 
-FVulkanTriangle::~FVulkanTriangle() {
+FVulkanApplication::~FVulkanApplication() {
   if (bIsInitialized) {
     Destroy();
     bIsInitialized = false;
   }
 }
 
-void FVulkanTriangle::Init(std::string &&InApplicationName, int InWindowWidth, int InWindowHeight) {
+void FVulkanApplication::Init(std::string &&InApplicationName, int InWindowWidth, int InWindowHeight) {
   check(!bIsInitialized);
 
   ApplicationName = std::move(InApplicationName);
@@ -109,7 +109,7 @@ void FVulkanTriangle::Init(std::string &&InApplicationName, int InWindowWidth, i
   bIsInitialized = true;
 }
 
-void FVulkanTriangle::Destroy() {
+void FVulkanApplication::Destroy() {
   if (bIsInitialized) {
     DeinitVulkan();
     DeinitWindow();
@@ -117,24 +117,24 @@ void FVulkanTriangle::Destroy() {
   }
 }
 
-void FVulkanTriangle::Run() {
+void FVulkanApplication::Run() {
   check(bIsInitialized);
   MainLoop();
 }
 
-void FVulkanTriangle::MainLoop() {
+void FVulkanApplication::MainLoop() {
   while (!glfwWindowShouldClose(Window)) {
     glfwPollEvents();
     const EResult Result = DrawFrame();
     if (Result != EResult::Success) {
-      std::cerr << "Error during frame drawing occurred: " << ToString(Result) << ". Continuing...\n";
+      std::cerr << "MainLoop(): " << ToString(Result) << ". Continuing...\n";
     }
   }
 
   vk_verify(vkDeviceWaitIdle(Device));
 }
 
-void FVulkanTriangle::InitWindow() {
+void FVulkanApplication::InitWindow() {
   fatal(glfwInit() != GLFW_TRUE, "Failed to initialize GLFW");
 
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -147,7 +147,7 @@ void FVulkanTriangle::InitWindow() {
   glfwSetFramebufferSizeCallback(Window, GLFWFramebufferResizeCallback);
 }
 
-void FVulkanTriangle::DeinitWindow() {
+void FVulkanApplication::DeinitWindow() {
   if (Window != nullptr) {
     glfwDestroyWindow(Window);
     Window = nullptr;
@@ -155,7 +155,7 @@ void FVulkanTriangle::DeinitWindow() {
   glfwTerminate();
 }
 
-void FVulkanTriangle::InitVulkan() {
+void FVulkanApplication::InitVulkan() {
   CreateInstance();
   if (EnableValidationLayers) {
     CreateDebugMessenger();
@@ -182,7 +182,7 @@ void FVulkanTriangle::InitVulkan() {
   CreateSyncObjects();
 }
 
-void FVulkanTriangle::DeinitVulkan() {
+void FVulkanApplication::DeinitVulkan() {
   DestroySyncObjects();
   DestroyCommandBuffers();
   DestroyDescriptorSets();
@@ -208,7 +208,7 @@ void FVulkanTriangle::DeinitVulkan() {
   DestroyInstance();
 }
 
-void FVulkanTriangle::CreateInstance() {
+void FVulkanApplication::CreateInstance() {
   const VkApplicationInfo AppInfo = {
     .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
     .pApplicationName = ApplicationName.c_str(),
@@ -241,7 +241,7 @@ void FVulkanTriangle::CreateInstance() {
   vk_verify(vkCreateInstance(&CreateInfo, nullptr, &Instance));
 }
 
-std::vector<const char *> FVulkanTriangle::GetRequiredInstanceExtensions() {
+std::vector<const char *> FVulkanApplication::GetRequiredInstanceExtensions() {
   uint32_t GLFWExtensionsCount = 0;
   const char **GLFWExtensions = glfwGetRequiredInstanceExtensions(&GLFWExtensionsCount);
   fatal(GLFWExtensionsCount == 0, "Failed to get GLFW extensions");
@@ -273,12 +273,12 @@ std::vector<const char *> FVulkanTriangle::GetRequiredInstanceExtensions() {
   return Extensions;
 }
 
-void FVulkanTriangle::DestroyInstance() {
+void FVulkanApplication::DestroyInstance() {
   if (Instance != VK_NULL_HANDLE) { vkDestroyInstance(Instance, nullptr); }
   Instance = VK_NULL_HANDLE;
 }
 
-void FVulkanTriangle::CreateDebugMessenger() {
+void FVulkanApplication::CreateDebugMessenger() {
   check(Instance != VK_NULL_HANDLE);
   ValidateLayers();
 
@@ -292,7 +292,7 @@ void FVulkanTriangle::CreateDebugMessenger() {
 
 }
 
-void FVulkanTriangle::ValidateLayers() {
+void FVulkanApplication::ValidateLayers() {
   uint32_t vkLayerPropertiesCount = 0;
   vk_verify(vkEnumerateInstanceLayerProperties(&vkLayerPropertiesCount, nullptr));
 
@@ -311,7 +311,7 @@ void FVulkanTriangle::ValidateLayers() {
   }
 }
 
-VkDebugUtilsMessengerCreateInfoEXT FVulkanTriangle::MakeDebugUtilsMessengerCreateInfo() {
+VkDebugUtilsMessengerCreateInfoEXT FVulkanApplication::MakeDebugUtilsMessengerCreateInfo() {
   return {
     .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
     .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
@@ -324,7 +324,7 @@ VkDebugUtilsMessengerCreateInfoEXT FVulkanTriangle::MakeDebugUtilsMessengerCreat
   };
 }
 
-void FVulkanTriangle::DestroyDebugMessenger() {
+void FVulkanApplication::DestroyDebugMessenger() {
   if (DebugMessenger != VK_NULL_HANDLE) {
     check(Instance != VK_NULL_HANDLE);
     const auto vkDestroyDebugUtilsMessenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
@@ -336,11 +336,11 @@ void FVulkanTriangle::DestroyDebugMessenger() {
   DebugMessenger = VK_NULL_HANDLE;
 }
 
-void FVulkanTriangle::CreateSurface() {
+void FVulkanApplication::CreateSurface() {
   fatal(glfwCreateWindowSurface(Instance, Window, nullptr, &Surface) != VK_SUCCESS, "Failed to create surface");
 }
 
-void FVulkanTriangle::DestroySurface() {
+void FVulkanApplication::DestroySurface() {
   if (Surface != VK_NULL_HANDLE) {
     check(Instance != VK_NULL_HANDLE);
     vkDestroySurfaceKHR(Instance, Surface, nullptr);
@@ -348,7 +348,7 @@ void FVulkanTriangle::DestroySurface() {
   }
 }
 
-void FVulkanTriangle::CreatePhysicalDevice() {
+void FVulkanApplication::CreatePhysicalDevice() {
   check(Instance != VK_NULL_HANDLE);
   uint32_t PhysicalDevicesCount = 0;
   vk_verify(vkEnumeratePhysicalDevices(Instance, &PhysicalDevicesCount, nullptr));
@@ -359,7 +359,7 @@ void FVulkanTriangle::CreatePhysicalDevice() {
   PhysicalDevice = PickPhysicalDevice(PhysicalDevices, Surface);
 }
 
-VkPhysicalDevice FVulkanTriangle::PickPhysicalDevice(
+VkPhysicalDevice FVulkanApplication::PickPhysicalDevice(
   const std::vector<VkPhysicalDevice> &Devices, VkSurfaceKHR Surface) {
 
   std::multimap<int, VkPhysicalDevice> PhysicalDevicesRanked;
@@ -449,11 +449,11 @@ VkPhysicalDevice FVulkanTriangle::PickPhysicalDevice(
   return PhysicalDevicesRanked.rbegin()->second;
 }
 
-void FVulkanTriangle::DestroyPhysicalDevice() {
+void FVulkanApplication::DestroyPhysicalDevice() {
   PhysicalDevice = VK_NULL_HANDLE;
 }
 
-void FVulkanTriangle::CreateLogicalDevice() {
+void FVulkanApplication::CreateLogicalDevice() {
   check(Instance != VK_NULL_HANDLE);
   check(PhysicalDevice != VK_NULL_HANDLE);
 
@@ -512,8 +512,8 @@ void FVulkanTriangle::CreateLogicalDevice() {
   vkGetDeviceQueue(Device, QueueIndices.PresentFamily, 0, &PresentQueue);
 }
 
-FVulkanTriangle::FQueueFamilyIndices FVulkanTriangle::FindQueueFamilies(VkPhysicalDevice PhysicalDevice,
-                                                                        VkSurfaceKHR Surface) {
+FVulkanApplication::FQueueFamilyIndices FVulkanApplication::FindQueueFamilies(VkPhysicalDevice PhysicalDevice,
+                                                                              VkSurfaceKHR Surface) {
   check(PhysicalDevice != VK_NULL_HANDLE);
   check(Surface != VK_NULL_HANDLE);
 
@@ -565,7 +565,7 @@ FVulkanTriangle::FQueueFamilyIndices FVulkanTriangle::FindQueueFamilies(VkPhysic
   return Indices;
 }
 
-void FVulkanTriangle::DestroyLogicalDevice() {
+void FVulkanApplication::DestroyLogicalDevice() {
   if (Device != VK_NULL_HANDLE) {
     vkDestroyDevice(Device, nullptr);
 
@@ -576,7 +576,7 @@ void FVulkanTriangle::DestroyLogicalDevice() {
   }
 }
 
-void FVulkanTriangle::CreateSwapChain() {
+void FVulkanApplication::CreateSwapChain() {
   check(PhysicalDevice != VK_NULL_HANDLE);
   check(Device != VK_NULL_HANDLE);
 
@@ -641,7 +641,7 @@ void FVulkanTriangle::CreateSwapChain() {
   vk_verify(vkGetSwapchainImagesKHR(Device, SwapChain, &SwapChainImageCount, SwapChainImages.data()));
 }
 
-VkSurfaceFormatKHR FVulkanTriangle::PickSwapChainSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &Formats) {
+VkSurfaceFormatKHR FVulkanApplication::PickSwapChainSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &Formats) {
   for (const auto &Format : Formats) {
     if (Format.format == VK_FORMAT_R8G8B8A8_SRGB && Format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
       return Format;
@@ -650,7 +650,7 @@ VkSurfaceFormatKHR FVulkanTriangle::PickSwapChainSurfaceFormat(const std::vector
   return Formats[0];
 }
 
-VkPresentModeKHR FVulkanTriangle::PickSwapChainPresentMode(const std::vector<VkPresentModeKHR> &PresentModes) {
+VkPresentModeKHR FVulkanApplication::PickSwapChainPresentMode(const std::vector<VkPresentModeKHR> &PresentModes) {
 
   for (const auto &PresentMode : PresentModes) {
     if (PresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
@@ -661,7 +661,7 @@ VkPresentModeKHR FVulkanTriangle::PickSwapChainPresentMode(const std::vector<VkP
   return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D FVulkanTriangle::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &Capabilities, GLFWwindow *Window) {
+VkExtent2D FVulkanApplication::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &Capabilities, GLFWwindow *Window) {
   check(Window != nullptr);
 
   if (Capabilities.currentExtent.width != UINT32_MAX) {
@@ -674,7 +674,7 @@ VkExtent2D FVulkanTriangle::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &
   glfwGetFramebufferSize(Window, &Width, &Height);
 
 
-  std::cout << "Framebuffer size: " << Width << "x" << Height << std::endl;
+  std::cerr << "PickSwapChainExtent(): Framebuffer size: " << Width << "x" << Height << std::endl;
 
   return {
     .width = std::clamp<uint32_t>(Width, Capabilities.minImageExtent.width, Capabilities.maxImageExtent.width),
@@ -682,7 +682,7 @@ VkExtent2D FVulkanTriangle::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &
 
 }
 
-void FVulkanTriangle::DestroySwapChain() {
+void FVulkanApplication::DestroySwapChain() {
   if (SwapChain != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroySwapchainKHR(Device, SwapChain, nullptr);
@@ -691,7 +691,7 @@ void FVulkanTriangle::DestroySwapChain() {
   }
 }
 
-void FVulkanTriangle::RecreateSwapChain() {
+void FVulkanApplication::RecreateSwapChain() {
   check(Device != VK_NULL_HANDLE);
   vk_verify(vkDeviceWaitIdle(Device));
   int Width = 0, Height = 0;
@@ -712,7 +712,7 @@ void FVulkanTriangle::RecreateSwapChain() {
   bFramebufferResized = false;
 }
 
-void FVulkanTriangle::CreateImageViews() {
+void FVulkanApplication::CreateImageViews() {
   check(Device != VK_NULL_HANDLE);
   check(!SwapChainImages.empty());
 
@@ -720,19 +720,19 @@ void FVulkanTriangle::CreateImageViews() {
 
 
   for (const auto Image : SwapChainImages) {
-    VkImageView ImageView = CreateImageView(Image, SwapChainSurfaceFormat.format, VK_IMAGE_ASPECT_COLOR_BIT);
+    VkImageView ImageView = CreateImageView(Image, SwapChainSurfaceFormat.format, VK_IMAGE_ASPECT_COLOR_BIT, 1);
     SwapChainImageViews.emplace_back(ImageView);
   }
 }
 
-void FVulkanTriangle::DestroyImageViews() {
+void FVulkanApplication::DestroyImageViews() {
   for (const auto ImageView : SwapChainImageViews) {
     DestroyImageView(ImageView);
   }
   SwapChainImageViews.clear();
 }
 
-void FVulkanTriangle::CreateDescriptorSetLayout() {
+void FVulkanApplication::CreateDescriptorSetLayout() {
   check(Device != VK_NULL_HANDLE);
 
   static constexpr std::array Bindings = {
@@ -752,7 +752,7 @@ void FVulkanTriangle::CreateDescriptorSetLayout() {
 
 }
 
-void FVulkanTriangle::DestroyDescriptorSetLayout() {
+void FVulkanApplication::DestroyDescriptorSetLayout() {
   if (DescriptorSetLayout != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroyDescriptorSetLayout(Device, DescriptorSetLayout, nullptr);
@@ -760,7 +760,7 @@ void FVulkanTriangle::DestroyDescriptorSetLayout() {
   }
 }
 
-void FVulkanTriangle::CreateGraphicsPipeline() {
+void FVulkanApplication::CreateGraphicsPipeline() {
   check(Device != VK_NULL_HANDLE);
   const auto ShaderCode = ReadFile("../shaders/slang.spv");
   checkf(!ShaderCode.empty(), "Loaded empty shader");
@@ -902,7 +902,7 @@ void FVulkanTriangle::CreateGraphicsPipeline() {
   DestroyShaderModule(ShaderModule);
 }
 
-VkShaderModule FVulkanTriangle::CreateShaderModule(const std::vector<char> &ShaderCode) const {
+VkShaderModule FVulkanApplication::CreateShaderModule(const std::vector<char> &ShaderCode) const {
   check(Device != VK_NULL_HANDLE);
   const VkShaderModuleCreateInfo ShaderModuleCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -915,14 +915,14 @@ VkShaderModule FVulkanTriangle::CreateShaderModule(const std::vector<char> &Shad
   return ShaderModule;
 }
 
-void FVulkanTriangle::DestroyShaderModule(VkShaderModule ShaderModule) const {
+void FVulkanApplication::DestroyShaderModule(VkShaderModule ShaderModule) const {
   if (ShaderModule != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroyShaderModule(Device, ShaderModule, nullptr);
   }
 }
 
-void FVulkanTriangle::DestroyGraphicsPipeline() {
+void FVulkanApplication::DestroyGraphicsPipeline() {
   if (GraphicsPipelineLayout != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroyPipelineLayout(Device, GraphicsPipelineLayout, nullptr);
@@ -935,7 +935,7 @@ void FVulkanTriangle::DestroyGraphicsPipeline() {
   }
 }
 
-void FVulkanTriangle::CreateCommandPool() {
+void FVulkanApplication::CreateCommandPool() {
   const VkCommandPoolCreateInfo CommandPoolCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
     .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -945,7 +945,7 @@ void FVulkanTriangle::CreateCommandPool() {
   vk_verify(vkCreateCommandPool(Device, &CommandPoolCreateInfo, nullptr, &CommandPool));
 }
 
-void FVulkanTriangle::DestroyCommandPool() {
+void FVulkanApplication::DestroyCommandPool() {
   if (CommandPool != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroyCommandPool(Device, CommandPool, nullptr);
@@ -953,19 +953,20 @@ void FVulkanTriangle::DestroyCommandPool() {
   }
 }
 
-void FVulkanTriangle::CreateDepthResources() {
+void FVulkanApplication::CreateDepthResources() {
   const VkFormat DepthFormat = FindDepthFormat();
 
-  std::tie(DepthImage, DepthImageMemory) = CreateImage(SwapChainExtent.width, SwapChainExtent.height, DepthFormat,
+  std::tie(DepthImage, DepthImageMemory) = CreateImage(SwapChainExtent.width, SwapChainExtent.height, 1,
+                                                       DepthFormat,
                                                        VK_IMAGE_TILING_OPTIMAL,
                                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                                                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  DepthImageView = CreateImageView(DepthImage, DepthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+  DepthImageView = CreateImageView(DepthImage, DepthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 
 }
 
-VkFormat FVulkanTriangle::FindSupportedFormat(const std::vector<VkFormat> &Formats, VkImageTiling Tiling,
-                                              VkFormatFeatureFlags Features) const {
+VkFormat FVulkanApplication::FindSupportedFormat(const std::vector<VkFormat> &Formats, VkImageTiling Tiling,
+                                                 VkFormatFeatureFlags Features) const {
   check(PhysicalDevice != VK_NULL_HANDLE);
 
   for (const auto Format : Formats) {
@@ -982,7 +983,7 @@ VkFormat FVulkanTriangle::FindSupportedFormat(const std::vector<VkFormat> &Forma
   fatal(true, "Failed to find supported format");
 }
 
-VkFormat FVulkanTriangle::FindDepthFormat() const {
+VkFormat FVulkanApplication::FindDepthFormat() const {
   return FindSupportedFormat(
     {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT},
     VK_IMAGE_TILING_OPTIMAL,
@@ -990,11 +991,11 @@ VkFormat FVulkanTriangle::FindDepthFormat() const {
     );
 }
 
-bool FVulkanTriangle::HasStencilComponent(VkFormat Format) {
+bool FVulkanApplication::HasStencilComponent(VkFormat Format) {
   return Format == VK_FORMAT_D32_SFLOAT_S8_UINT || Format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
-void FVulkanTriangle::DestroyDepthResources() {
+void FVulkanApplication::DestroyDepthResources() {
   if (DepthImageView != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     DestroyImageView(DepthImageView);
@@ -1008,7 +1009,7 @@ void FVulkanTriangle::DestroyDepthResources() {
   }
 }
 
-void FVulkanTriangle::CreateTextureImage() {
+void FVulkanApplication::CreateTextureImage() {
   check(Device != VK_NULL_HANDLE);
 
   int TextureWidth = 0;
@@ -1018,6 +1019,7 @@ void FVulkanTriangle::CreateTextureImage() {
   stbi_uc *Pixels = stbi_load(kTexturePath.c_str(), &TextureWidth, &TextureHeight, &TextureChannels,
                               STBI_rgb_alpha);
   const VkDeviceSize ImageSize = TextureWidth * TextureHeight * 4;
+  MipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(TextureWidth, TextureHeight))));
   fatal(Pixels == nullptr, "Failed to load texture image");
 
   constexpr VkBufferUsageFlags StagingUsage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
@@ -1034,32 +1036,33 @@ void FVulkanTriangle::CreateTextureImage() {
 
   constexpr VkFormat ImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
   constexpr VkImageTiling ImageTiling = VK_IMAGE_TILING_OPTIMAL;
-  constexpr VkImageUsageFlags ImageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  constexpr VkImageUsageFlags ImageUsage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+    VK_IMAGE_USAGE_SAMPLED_BIT;
   constexpr VkMemoryPropertyFlags ImageMemoryProperties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
-  std::tie(TextureImage, TextureImageMemory) = CreateImage(TextureWidth, TextureHeight, ImageFormat, ImageTiling,
-                                                           ImageUsage, ImageMemoryProperties);
+  std::tie(TextureImage, TextureImageMemory) = CreateImage(TextureWidth, TextureHeight, MipLevels, ImageFormat,
+                                                           ImageTiling, ImageUsage, ImageMemoryProperties);
 
-  TransitionImageLayout(TextureImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  TransitionImageLayout(TextureImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, MipLevels);
 
   CopyBufferToImage(StagingBuffer, TextureImage, TextureWidth, TextureHeight);
 
-  TransitionImageLayout(TextureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  GenerateMipMaps(TextureImage, VK_FORMAT_R8G8B8A8_SRGB, TextureWidth, TextureHeight, MipLevels);
 
   DestroyBuffer(StagingBuffer, StagingMemory);
 }
 
-std::pair<VkImage, VkDeviceMemory> FVulkanTriangle::CreateImage(uint32_t Width, uint32_t Height, VkFormat Format,
-                                                                VkImageTiling Tiling, VkImageUsageFlags Usage,
-                                                                VkMemoryPropertyFlags Properties) const {
+std::pair<VkImage, VkDeviceMemory> FVulkanApplication::CreateImage(uint32_t Width, uint32_t Height, uint32_t mipLevels,
+                                                                   VkFormat Format, VkImageTiling Tiling,
+                                                                   VkImageUsageFlags Usage,
+                                                                   VkMemoryPropertyFlags Properties) const {
   check(Device != VK_NULL_HANDLE);
   const VkImageCreateInfo ImageCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
     .imageType = VK_IMAGE_TYPE_2D,
     .format = Format,
     .extent = {Width, Height, 1},
-    .mipLevels = 1,
+    .mipLevels = mipLevels,
     .arrayLayers = 1,
     .samples = VK_SAMPLE_COUNT_1_BIT,
     .tiling = Tiling,
@@ -1085,7 +1088,7 @@ std::pair<VkImage, VkDeviceMemory> FVulkanTriangle::CreateImage(uint32_t Width, 
   return {Image, Memory};
 }
 
-void FVulkanTriangle::DestroyImage(VkImage Image, VkDeviceMemory Memory) const {
+void FVulkanApplication::DestroyImage(VkImage Image, VkDeviceMemory Memory) const {
   if (Memory != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkFreeMemory(Device, Memory, nullptr);
@@ -1098,7 +1101,8 @@ void FVulkanTriangle::DestroyImage(VkImage Image, VkDeviceMemory Memory) const {
   }
 }
 
-void FVulkanTriangle::TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout) const {
+void FVulkanApplication::TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout,
+                                               uint32_t mipLevels) const {
   VkCommandBuffer CommandBuffer = BeginSingleTimeCommands();
 
   VkImageMemoryBarrier ImageMemoryBarrier = {
@@ -1106,7 +1110,7 @@ void FVulkanTriangle::TransitionImageLayout(VkImage Image, VkImageLayout OldLayo
     .oldLayout = OldLayout,
     .newLayout = NewLayout,
     .image = Image,
-    .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+    .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, MipLevels, 0, 1},
   };
 
   VkPipelineStageFlags SourceStage = 0;
@@ -1140,7 +1144,7 @@ void FVulkanTriangle::TransitionImageLayout(VkImage Image, VkImageLayout OldLayo
   EndSingleTimeCommands(CommandBuffer);
 }
 
-void FVulkanTriangle::CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t Width, uint32_t Height) const {
+void FVulkanApplication::CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t Width, uint32_t Height) const {
   VkCommandBuffer CommandBuffer = BeginSingleTimeCommands();
 
   const VkBufferImageCopy Region{
@@ -1157,7 +1161,7 @@ void FVulkanTriangle::CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t
   EndSingleTimeCommands(CommandBuffer);
 }
 
-void FVulkanTriangle::DestroyTextureImage() {
+void FVulkanApplication::DestroyTextureImage() {
   if (TextureImageMemory != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkFreeMemory(Device, TextureImageMemory, nullptr);
@@ -1170,14 +1174,111 @@ void FVulkanTriangle::DestroyTextureImage() {
   }
 }
 
-VkImageView FVulkanTriangle::CreateImageView(VkImage Image, VkFormat Format, VkImageAspectFlags AspectFlags) const {
+void FVulkanApplication::GenerateMipMaps(VkImage Image, VkFormat ImageFormat, int32_t TextureWidth,
+                                         int32_t TextureHeight, uint32_t mipLevels) const {
+  VkFormatProperties FormatProperties;
+  vkGetPhysicalDeviceFormatProperties(PhysicalDevice, ImageFormat, &FormatProperties);
+  fatal(!(FormatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),
+        "Texture image does not support linear biting");
+
+
+  VkCommandBuffer CommandBuffer = BeginSingleTimeCommands();
+
+  VkImageMemoryBarrier ImageMemoryBarrier = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+    .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+    .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+    .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .image = Image,
+    .subresourceRange = {
+      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+      .levelCount = 1,
+      .baseArrayLayer = 0,
+      .layerCount = 1,
+    }
+  };
+
+  int32_t mipWidth = TextureWidth;
+  int32_t mipHeight = TextureHeight;
+
+  for (uint32_t i = 1; i < mipLevels; i++) {
+    ImageMemoryBarrier.subresourceRange.baseMipLevel = i - 1;
+    ImageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    ImageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    ImageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    ImageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(CommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                         nullptr, 0, nullptr,
+                         1, &ImageMemoryBarrier);
+    VkOffset3D offsets[2], dstOffsets[2];
+    offsets[0] = {0, 0, 0};
+    offsets[1] = {mipWidth, mipHeight, 1};
+    dstOffsets[0] = {0, 0, 0};
+    dstOffsets[1] = {mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1};
+    VkImageBlit blit{};
+    memcpy(blit.srcOffsets, offsets, sizeof(offsets));
+    memcpy(blit.dstOffsets, dstOffsets, sizeof(dstOffsets));
+    blit.srcSubresource = {
+      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+      .mipLevel = i - 1,
+      .baseArrayLayer = 0,
+      .layerCount = 1
+    };
+    blit.dstSubresource = {
+      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+      .mipLevel = i,
+      .baseArrayLayer = 0,
+      .layerCount = 1,
+    };
+
+    vkCmdBlitImage(CommandBuffer, Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Image,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+
+    ImageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    ImageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    ImageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    ImageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(CommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                         nullptr, 0, nullptr,
+                         1, &ImageMemoryBarrier);
+
+    if (mipWidth > 1) {
+      mipWidth /= 2;
+    }
+    if (mipHeight > 1) {
+      mipHeight /= 2;
+    }
+  }
+
+  ImageMemoryBarrier.subresourceRange.baseMipLevel = mipLevels - 1;
+  ImageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  ImageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  ImageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  ImageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  vkCmdPipelineBarrier(CommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                       nullptr, 0, nullptr,
+                       1, &ImageMemoryBarrier);
+
+  EndSingleTimeCommands(CommandBuffer);
+}
+
+VkImageView FVulkanApplication::CreateImageView(VkImage Image, VkFormat Format, VkImageAspectFlags AspectFlags,
+                                                uint32_t mipLevels) const {
   check(Device != VK_NULL_HANDLE);
   const VkImageViewCreateInfo ImageViewCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
     .image = Image,
     .viewType = VK_IMAGE_VIEW_TYPE_2D,
     .format = Format,
-    .subresourceRange = {AspectFlags, 0, 1, 0, 1},
+    .subresourceRange = {AspectFlags, 0, mipLevels, 0, 1},
   };
 
   VkImageView ImageView = VK_NULL_HANDLE;
@@ -1186,25 +1287,25 @@ VkImageView FVulkanTriangle::CreateImageView(VkImage Image, VkFormat Format, VkI
   return ImageView;
 }
 
-void FVulkanTriangle::DestroyImageView(VkImageView ImageView) const {
+void FVulkanApplication::DestroyImageView(VkImageView ImageView) const {
   if (ImageView != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroyImageView(Device, ImageView, nullptr);
   }
 }
 
-void FVulkanTriangle::CreateTextureImageView() {
-  TextureImageView = CreateImageView(TextureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+void FVulkanApplication::CreateTextureImageView() {
+  TextureImageView = CreateImageView(TextureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, MipLevels);
 }
 
-void FVulkanTriangle::DestroyTextureImageView() {
+void FVulkanApplication::DestroyTextureImageView() {
   if (TextureImageView != VK_NULL_HANDLE) {
     DestroyImageView(TextureImageView);
     TextureImageView = VK_NULL_HANDLE;
   }
 }
 
-void FVulkanTriangle::CreateTextureSampler() {
+void FVulkanApplication::CreateTextureSampler() {
   check(Device != VK_NULL_HANDLE);
   check(PhysicalDevice != VK_NULL_HANDLE);
 
@@ -1224,7 +1325,7 @@ void FVulkanTriangle::CreateTextureSampler() {
     .compareEnable = VK_FALSE,
     .compareOp = VK_COMPARE_OP_ALWAYS,
     .minLod = 0.0f,
-    .maxLod = 0.0f,
+    .maxLod = VK_LOD_CLAMP_NONE,
     .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
     .unnormalizedCoordinates = VK_FALSE,
   };
@@ -1232,7 +1333,7 @@ void FVulkanTriangle::CreateTextureSampler() {
   vk_verify(vkCreateSampler(Device, &TextureSamplerCreateInfo, nullptr, &TextureSampler));
 }
 
-void FVulkanTriangle::DestroyTextureSampler() {
+void FVulkanApplication::DestroyTextureSampler() {
   if (TextureSampler != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroySampler(Device, TextureSampler, nullptr);
@@ -1240,7 +1341,7 @@ void FVulkanTriangle::DestroyTextureSampler() {
   }
 }
 
-void FVulkanTriangle::LoadModel() {
+void FVulkanApplication::LoadModel() {
   tinyobj::attrib_t Attrib;
   std::vector<tinyobj::shape_t> Shapes;
   std::vector<tinyobj::material_t> Materials;
@@ -1276,7 +1377,7 @@ void FVulkanTriangle::LoadModel() {
   }
 }
 
-void FVulkanTriangle::CreateVertexBuffer() {
+void FVulkanApplication::CreateVertexBuffer() {
   check(Device != VK_NULL_HANDLE);
   const VkDeviceSize BufferSize = sizeof(Vertices[0]) * Vertices.size();
 
@@ -1303,8 +1404,8 @@ void FVulkanTriangle::CreateVertexBuffer() {
   DestroyBuffer(StagingBuffer, StagingBufferMemory);
 }
 
-std::pair<VkBuffer, VkDeviceMemory> FVulkanTriangle::CreateBuffer(VkDeviceSize Size, VkBufferUsageFlags Usage,
-                                                                  VkMemoryPropertyFlags Properties) const {
+std::pair<VkBuffer, VkDeviceMemory> FVulkanApplication::CreateBuffer(VkDeviceSize Size, VkBufferUsageFlags Usage,
+                                                                     VkMemoryPropertyFlags Properties) const {
   check(Device != VK_NULL_HANDLE);
   const VkBufferCreateInfo BufferCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1334,7 +1435,7 @@ std::pair<VkBuffer, VkDeviceMemory> FVulkanTriangle::CreateBuffer(VkDeviceSize S
 }
 
 
-uint32_t FVulkanTriangle::FindMemoryType(uint32_t TypeFilter, VkMemoryPropertyFlags Properties) const {
+uint32_t FVulkanApplication::FindMemoryType(uint32_t TypeFilter, VkMemoryPropertyFlags Properties) const {
   check(PhysicalDevice != VK_NULL_HANDLE);
 
   VkPhysicalDeviceMemoryProperties MemoryProperties;
@@ -1349,7 +1450,7 @@ uint32_t FVulkanTriangle::FindMemoryType(uint32_t TypeFilter, VkMemoryPropertyFl
   fatal(true, "Failed to find suitable memory type");
 }
 
-void FVulkanTriangle::CopyBuffer(VkBuffer Src, VkBuffer Dst, VkDeviceSize Size) const {
+void FVulkanApplication::CopyBuffer(VkBuffer Src, VkBuffer Dst, VkDeviceSize Size) const {
   check(Device != VK_NULL_HANDLE);
   check(CommandPool != VK_NULL_HANDLE);
   check(GraphicsQueue != VK_NULL_HANDLE);
@@ -1368,7 +1469,7 @@ void FVulkanTriangle::CopyBuffer(VkBuffer Src, VkBuffer Dst, VkDeviceSize Size) 
 }
 
 
-void FVulkanTriangle::DestroyBuffer(VkBuffer Buffer, VkDeviceMemory Memory) const {
+void FVulkanApplication::DestroyBuffer(VkBuffer Buffer, VkDeviceMemory Memory) const {
   if (Buffer != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     if (Memory != VK_NULL_HANDLE) {
@@ -1380,11 +1481,11 @@ void FVulkanTriangle::DestroyBuffer(VkBuffer Buffer, VkDeviceMemory Memory) cons
   }
 }
 
-void FVulkanTriangle::DestroyVertexBuffer() const {
+void FVulkanApplication::DestroyVertexBuffer() const {
   DestroyBuffer(VertexBuffer, VertexBufferMemory);
 }
 
-void FVulkanTriangle::CreateIndexBuffer() {
+void FVulkanApplication::CreateIndexBuffer() {
   check(Device != VK_NULL_HANDLE);
   const VkDeviceSize BufferSize = sizeof(Indices[0]) * Indices.size();
 
@@ -1411,11 +1512,11 @@ void FVulkanTriangle::CreateIndexBuffer() {
   DestroyBuffer(StagingBuffer, StagingBufferMemory);
 }
 
-void FVulkanTriangle::DestroyIndexBuffer() const {
+void FVulkanApplication::DestroyIndexBuffer() const {
   DestroyBuffer(IndexBuffer, IndexBufferMemory);
 }
 
-void FVulkanTriangle::CreateUniformBuffer() {
+void FVulkanApplication::CreateUniformBuffer() {
   check(Device != VK_NULL_HANDLE);
   UniformBuffers.clear();
   UniformBuffersMemory.clear();
@@ -1436,7 +1537,7 @@ void FVulkanTriangle::CreateUniformBuffer() {
   }
 }
 
-void FVulkanTriangle::UpdateUniformBuffer(uint32_t CurrentImage) const {
+void FVulkanApplication::UpdateUniformBuffer(uint32_t CurrentImage) const {
 
   FUniformBufferObject UBO{};
   UBO.Model = glm::rotate(glm::mat4(1.0f), glm::radians(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
@@ -1450,7 +1551,7 @@ void FVulkanTriangle::UpdateUniformBuffer(uint32_t CurrentImage) const {
   memcpy(UniformBuffersMapped[CurrentImage], &UBO, sizeof(UBO));
 }
 
-void FVulkanTriangle::DestroyUniformBuffer() {
+void FVulkanApplication::DestroyUniformBuffer() {
   if (!UniformBuffers.empty()) {
     check(UniformBuffers.size() == UniformBuffersMemory.size());
     check(UniformBuffersMemory.size() == UniformBuffersMapped.size());
@@ -1467,7 +1568,7 @@ void FVulkanTriangle::DestroyUniformBuffer() {
   }
 }
 
-void FVulkanTriangle::CreateDescriptorPool() {
+void FVulkanApplication::CreateDescriptorPool() {
   check(Device != VK_NULL_HANDLE);
 
   static constexpr std::array PoolSize{
@@ -1487,7 +1588,7 @@ void FVulkanTriangle::CreateDescriptorPool() {
   vk_verify(vkCreateDescriptorPool(Device, &DescriptorPoolCreateInfo, nullptr, &DescriptorPool));
 }
 
-void FVulkanTriangle::DestroyDescriptorPool() {
+void FVulkanApplication::DestroyDescriptorPool() {
   if (DescriptorPool != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroyDescriptorPool(Device, DescriptorPool, nullptr);
@@ -1495,7 +1596,7 @@ void FVulkanTriangle::DestroyDescriptorPool() {
   }
 }
 
-void FVulkanTriangle::CreateDescriptorSets() {
+void FVulkanApplication::CreateDescriptorSets() {
   check(Device != VK_NULL_HANDLE);
 
   const std::vector<VkDescriptorSetLayout> DescriptorSetLayouts(MAX_FRAMES_IN_FLIGHT, DescriptorSetLayout);
@@ -1547,7 +1648,7 @@ void FVulkanTriangle::CreateDescriptorSets() {
   }
 }
 
-void FVulkanTriangle::DestroyDescriptorSets() {
+void FVulkanApplication::DestroyDescriptorSets() {
   if (!DescriptorSets.empty()) {
     check(Device != VK_NULL_HANDLE);
     vkFreeDescriptorSets(Device, DescriptorPool, static_cast<uint32_t>(DescriptorSets.size()), DescriptorSets.data());
@@ -1555,7 +1656,7 @@ void FVulkanTriangle::DestroyDescriptorSets() {
   }
 }
 
-void FVulkanTriangle::CreateCommandBuffers() {
+void FVulkanApplication::CreateCommandBuffers() {
   check(Device != VK_NULL_HANDLE);
 
   CommandBuffers.clear();
@@ -1571,7 +1672,7 @@ void FVulkanTriangle::CreateCommandBuffers() {
   vk_verify(vkAllocateCommandBuffers(Device, &CommandBufferAllocateInfo, CommandBuffers.data()));
 }
 
-void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
+void FVulkanApplication::RecordCommandBuffer(uint32_t ImageIndex) const {
   check(!CommandBuffers.empty());
   check(CommandBuffers[FrameIndex] != VK_NULL_HANDLE);
   check(GraphicsPipeline != VK_NULL_HANDLE);
@@ -1590,7 +1691,7 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-    VK_IMAGE_ASPECT_COLOR_BIT);
+    VK_IMAGE_ASPECT_COLOR_BIT, 1);
 
   TransitionImageLayout(
     DepthImage,
@@ -1600,7 +1701,7 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-    VK_IMAGE_ASPECT_DEPTH_BIT);
+    VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 
   constexpr auto ClearColor = VkClearColorValue{{0.0f, 0.0f, 0.0f, 1.0f}};
   constexpr auto ClearDepth = VkClearDepthStencilValue{1.0f, 0};
@@ -1671,20 +1772,20 @@ void FVulkanTriangle::RecordCommandBuffer(uint32_t ImageIndex) const {
     {},
     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
     VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
-    VK_IMAGE_ASPECT_COLOR_BIT
+    VK_IMAGE_ASPECT_COLOR_BIT, 1
     );
 
   vk_verify(vkEndCommandBuffer(CommandBuffers[FrameIndex]));
 }
 
-void FVulkanTriangle::DestroyCommandBuffers() {
+void FVulkanApplication::DestroyCommandBuffers() {
   check(CommandBuffers.size() == MAX_FRAMES_IN_FLIGHT);
   check(Device != VK_NULL_HANDLE);
   vkFreeCommandBuffers(Device, CommandPool, MAX_FRAMES_IN_FLIGHT, CommandBuffers.data());
   CommandBuffers.clear();
 }
 
-VkCommandBuffer FVulkanTriangle::BeginSingleTimeCommands() const {
+VkCommandBuffer FVulkanApplication::BeginSingleTimeCommands() const {
   check(CommandPool != VK_NULL_HANDLE);
   check(Device != VK_NULL_HANDLE);
 
@@ -1706,7 +1807,7 @@ VkCommandBuffer FVulkanTriangle::BeginSingleTimeCommands() const {
   return Buffer;
 }
 
-void FVulkanTriangle::EndSingleTimeCommands(VkCommandBuffer &CommandBuffer) const {
+void FVulkanApplication::EndSingleTimeCommands(VkCommandBuffer &CommandBuffer) const {
   if (CommandBuffer != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     check(GraphicsQueue != VK_NULL_HANDLE);
@@ -1728,11 +1829,11 @@ void FVulkanTriangle::EndSingleTimeCommands(VkCommandBuffer &CommandBuffer) cons
 }
 
 
-void FVulkanTriangle::TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout,
-                                            VkAccessFlags2 SrcAccessMask, VkAccessFlags2 DstAccessMask,
-                                            VkPipelineStageFlags2 SrcStageMask,
-                                            VkPipelineStageFlags2 DstStageMask,
-                                            VkImageAspectFlags ImageAspectFlags) const {
+void FVulkanApplication::TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout,
+                                               VkAccessFlags2 SrcAccessMask, VkAccessFlags2 DstAccessMask,
+                                               VkPipelineStageFlags2 SrcStageMask,
+                                               VkPipelineStageFlags2 DstStageMask,
+                                               VkImageAspectFlags ImageAspectFlags, uint32_t mipLevels) const {
   const VkImageMemoryBarrier2 Barrier = {
     .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
     .srcStageMask = SrcStageMask,
@@ -1747,7 +1848,7 @@ void FVulkanTriangle::TransitionImageLayout(VkImage Image, VkImageLayout OldLayo
     .subresourceRange = {
       .aspectMask = ImageAspectFlags,
       .baseMipLevel = 0,
-      .levelCount = 1,
+      .levelCount = mipLevels,
       .baseArrayLayer = 0,
       .layerCount = 1,
     },
@@ -1763,7 +1864,7 @@ void FVulkanTriangle::TransitionImageLayout(VkImage Image, VkImageLayout OldLayo
   vkCmdPipelineBarrier2(CommandBuffers[FrameIndex], &DependencyInfo);
 }
 
-void FVulkanTriangle::CreateSyncObjects() {
+void FVulkanApplication::CreateSyncObjects() {
   check(!SwapChainImages.empty());
   check(PresentCompleteSemaphores.empty() && RenderCompleteSemaphores.empty() && InFlightFences.empty());
   check(Device != VK_NULL_HANDLE);
@@ -1792,7 +1893,7 @@ void FVulkanTriangle::CreateSyncObjects() {
   }
 }
 
-void FVulkanTriangle::DestroySyncObjects() {
+void FVulkanApplication::DestroySyncObjects() {
   for (const auto Semaphore : RenderCompleteSemaphores) {
     check(Device != VK_NULL_HANDLE);
     vkDestroySemaphore(Device, Semaphore, nullptr);
@@ -1811,18 +1912,14 @@ void FVulkanTriangle::DestroySyncObjects() {
   }
 }
 
-EResult FVulkanTriangle::DrawFrame() {
+EResult FVulkanApplication::DrawFrame() {
   check(Device != VK_NULL_HANDLE);
   check(!InFlightFences.empty());
   check(!PresentCompleteSemaphores.empty());
   check(!RenderCompleteSemaphores.empty());
   check(SwapChain != VK_NULL_HANDLE);
 
-  vk_verify(vkWaitForFences(Device, 1, &InFlightFences[FrameIndex],VK_TRUE, UINT64_MAX));
-
-  if (bFramebufferResized) {
-    RecreateSwapChain();
-  }
+  vk_verify(vkWaitForFences(Device, 1, &InFlightFences[FrameIndex], VK_TRUE, UINT64_MAX));
 
   uint32_t ImageIndex = 0;
   const VkResult AcquireResult = vkAcquireNextImageKHR(Device, SwapChain, UINT64_MAX,
@@ -1832,31 +1929,26 @@ EResult FVulkanTriangle::DrawFrame() {
     RecreateSwapChain();
     return EResult::SwapChainOutOfDate;
   }
-  if (AcquireResult == VK_SUBOPTIMAL_KHR) {
-    RecreateSwapChain();
-    return EResult::SwapChainSuboptimal;
+  if (AcquireResult != VK_SUCCESS && AcquireResult != VK_SUBOPTIMAL_KHR) {
+    vk_verify(AcquireResult);
   }
-  vk_verify(AcquireResult);
-
-  RecordCommandBuffer(ImageIndex);
 
   vk_verify(vkResetFences(Device, 1, &InFlightFences[FrameIndex]));
 
+  RecordCommandBuffer(ImageIndex);
   UpdateUniformBuffer(FrameIndex);
 
-  constexpr VkPipelineStageFlags WaitDstStorageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;;
+  constexpr VkPipelineStageFlags WaitDstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
   const VkSubmitInfo SubmitInfo = {
     .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
     .waitSemaphoreCount = 1,
     .pWaitSemaphores = &PresentCompleteSemaphores[FrameIndex],
-    .pWaitDstStageMask = &WaitDstStorageMask,
+    .pWaitDstStageMask = &WaitDstStageMask,
     .commandBufferCount = 1,
     .pCommandBuffers = &CommandBuffers[FrameIndex],
     .signalSemaphoreCount = 1,
     .pSignalSemaphores = &RenderCompleteSemaphores[ImageIndex],
   };
-
-
   vk_verify(vkQueueSubmit(GraphicsQueue, 1, &SubmitInfo, InFlightFences[FrameIndex]));
 
   const VkPresentInfoKHR PresentInfo = {
@@ -1867,20 +1959,19 @@ EResult FVulkanTriangle::DrawFrame() {
     .pSwapchains = &SwapChain,
     .pImageIndices = &ImageIndex,
   };
-
   const VkResult PresentResult = vkQueuePresentKHR(GraphicsQueue, &PresentInfo);
-  if (PresentResult == VK_SUBOPTIMAL_KHR || PresentResult == VK_ERROR_OUT_OF_DATE_KHR) {
+  if (PresentResult == VK_SUBOPTIMAL_KHR || PresentResult == VK_ERROR_OUT_OF_DATE_KHR || bFramebufferResized) {
+    bFramebufferResized = false;
     RecreateSwapChain();
     return EResult::SwapChainSuboptimal;
   }
   vk_verify(PresentResult);
 
   FrameIndex = (FrameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
-
   return EResult::Success;
 }
 
-void FVulkanTriangle::GLFWFramebufferResizeCallback(GLFWwindow *window, int Width, int Height) {
-  auto *App = static_cast<FVulkanTriangle *>(glfwGetWindowUserPointer(window));
+void FVulkanApplication::GLFWFramebufferResizeCallback(GLFWwindow *window, int Width, int Height) {
+  auto *App = static_cast<FVulkanApplication *>(glfwGetWindowUserPointer(window));
   App->bFramebufferResized = true;
 }

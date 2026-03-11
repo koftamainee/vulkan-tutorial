@@ -65,8 +65,8 @@ add_slang_shader_target(shaders
 
 add_executable(vulkan
         src/main.cpp
-        src/FVulkanTriangle.cpp
-        src/FVulkanTriangle.h
+        src/FVulkanApplication.cpp
+        src/FVulkanApplication.h
         src/EResult.h
 )
 

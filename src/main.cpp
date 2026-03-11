@@ -1,9 +1,9 @@
 #include <cstring>
 #include <iostream>
-#include "FVulkanTriangle.h"
+#include "FVulkanApplication.h"
 
 int main() {
-  FVulkanTriangle App;
+  FVulkanApplication App;
   App.Init("VulkanTriangle", 800, 600);
 
   App.Run();
