@@ -251,6 +251,7 @@ private:
 
   VkPipelineLayout GraphicsPipelineLayout = VK_NULL_HANDLE;
   VkPipeline GraphicsPipeline = VK_NULL_HANDLE;
+  VkPipeline WireFramePipeline = VK_NULL_HANDLE;
 
   VkCommandPool CommandPool = VK_NULL_HANDLE;
   std::vector<VkCommandBuffer> CommandBuffers{};
@@ -310,11 +311,13 @@ private:
     bool bIsOrbiting = false;
     double LastMouseX = 0.0;
     double LastMouseY = 0.0;
+    bool bWireframe = false;
   } Camera;
 
   static void GLFWScrollCallback(GLFWwindow *window, double xOffset, double yOffset);
   static void GLFWMouseButtonCallback(GLFWwindow *window, int button, int action, int mods);
   static void GLFWCursorPosCallback(GLFWwindow *window, double xPos, double yPos);
+  static void GLFWKeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods);
 
   void HandleScroll(double yOffset);
   void HandleMouseButton(int button, int action);

@@ -148,8 +148,8 @@ void FVulkanApplication::InitWindow() {
   glfwSetWindowUserPointer(Window, this);
   glfwSetFramebufferSizeCallback(Window, GLFWFramebufferResizeCallback);
   glfwSetScrollCallback(Window, GLFWScrollCallback);
-  glfwSetMouseButtonCallback(Window, GLFWMouseButtonCallback);
   glfwSetCursorPosCallback(Window, GLFWCursorPosCallback);
+  glfwSetKeyCallback(Window, GLFWKeyCallback);
 }
 
 void FVulkanApplication::DeinitWindow() {
@@ -503,9 +503,13 @@ void FVulkanApplication::CreateLogicalDevice() {
     });
   }
 
+
   VkPhysicalDeviceFeatures2 Features2{
     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-    .features = {.samplerAnisotropy = true},
+    .features = {.sampleRateShading = VK_TRUE,
+                 .fillModeNonSolid = VK_TRUE,
+                 .samplerAnisotropy = VK_TRUE,
+    },
   };
 
   VkPhysicalDeviceVulkan13Features Vulkan13Features = {
@@ -684,7 +688,7 @@ VkPresentModeKHR FVulkanApplication::PickSwapChainPresentMode(const std::vector<
     }
   }
 
-  return VK_PRESENT_MODE_FIFO_KHR;
+  return VK_PRESENT_MODE_MAILBOX_KHR;
 }
 
 VkExtent2D FVulkanApplication::PickSwapChainExtent(const VkSurfaceCapabilitiesKHR &Capabilities, GLFWwindow *Window) {
@@ -848,7 +852,7 @@ void FVulkanApplication::CreateGraphicsPipeline() {
   };
 
 
-  constexpr VkPipelineRasterizationStateCreateInfo RasterizerStateCreateInfo = {
+  VkPipelineRasterizationStateCreateInfo RasterizerStateCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
     .depthClampEnable = VK_FALSE,
     .rasterizerDiscardEnable = VK_FALSE,
@@ -863,7 +867,8 @@ void FVulkanApplication::CreateGraphicsPipeline() {
   const VkPipelineMultisampleStateCreateInfo MultisampleStateCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
     .rasterizationSamples = MSAASamples,
-    .sampleShadingEnable = VK_FALSE,
+    .sampleShadingEnable = VK_TRUE,
+    .minSampleShading = 0.2f,
   };
 
   VkPipelineDepthStencilStateCreateInfo DepthStencilStateCreateInfo = {
@@ -907,7 +912,7 @@ void FVulkanApplication::CreateGraphicsPipeline() {
     .depthAttachmentFormat = DepthFormat,
   };
 
-  const VkGraphicsPipelineCreateInfo GraphicsPipelineCreateInfo = {
+  VkGraphicsPipelineCreateInfo GraphicsPipelineCreateInfo = {
     .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
     .pNext = &RenderingCreateInfo,
     .stageCount = 2,
@@ -926,6 +931,11 @@ void FVulkanApplication::CreateGraphicsPipeline() {
 
   vk_verify(vkCreateGraphicsPipelines(Device, VK_NULL_HANDLE, 1, &GraphicsPipelineCreateInfo, nullptr,
     &GraphicsPipeline));
+
+  RasterizerStateCreateInfo.polygonMode = VK_POLYGON_MODE_LINE;
+
+  vk_verify(vkCreateGraphicsPipelines(Device, VK_NULL_HANDLE, 1, &GraphicsPipelineCreateInfo, nullptr,
+    &WireFramePipeline));
 
   DestroyShaderModule(ShaderModule);
 }
@@ -951,15 +961,20 @@ void FVulkanApplication::DestroyShaderModule(VkShaderModule ShaderModule) const 
 }
 
 void FVulkanApplication::DestroyGraphicsPipeline() {
-  if (GraphicsPipelineLayout != VK_NULL_HANDLE) {
-    check(Device != VK_NULL_HANDLE);
-    vkDestroyPipelineLayout(Device, GraphicsPipelineLayout, nullptr);
-    GraphicsPipelineLayout = VK_NULL_HANDLE;
-  }
   if (GraphicsPipeline != VK_NULL_HANDLE) {
     check(Device != VK_NULL_HANDLE);
     vkDestroyPipeline(Device, GraphicsPipeline, nullptr);
     GraphicsPipeline = VK_NULL_HANDLE;
+  }
+  if (WireFramePipeline != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyPipeline(Device, WireFramePipeline, nullptr);
+    GraphicsPipeline = VK_NULL_HANDLE;
+  }
+  if (GraphicsPipelineLayout != VK_NULL_HANDLE) {
+    check(Device != VK_NULL_HANDLE);
+    vkDestroyPipelineLayout(Device, GraphicsPipelineLayout, nullptr);
+    GraphicsPipelineLayout = VK_NULL_HANDLE;
   }
 }
 
@@ -1355,7 +1370,6 @@ void FVulkanApplication::CreateTextureSampler() {
     .maxAnisotropy = Properties.limits.maxSamplerAnisotropy,
     .compareEnable = VK_FALSE,
     .compareOp = VK_COMPARE_OP_ALWAYS,
-    .minLod = 0.0f,
     .maxLod = VK_LOD_CLAMP_NONE,
     .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
     .unnormalizedCoordinates = VK_FALSE,
@@ -1596,7 +1610,7 @@ void FVulkanApplication::CreateUniformBuffer() {
 }
 
 void FVulkanApplication::UpdateUniformBuffer(uint32_t CurrentImage) const {
-  const float yawRad   = glm::radians(Camera.Yaw);
+  const float yawRad = glm::radians(Camera.Yaw);
   const float pitchRad = glm::radians(Camera.Pitch);
 
   const glm::vec3 Offset = {
@@ -1606,13 +1620,13 @@ void FVulkanApplication::UpdateUniformBuffer(uint32_t CurrentImage) const {
   };
 
   FUniformBufferObject ubo{};
-  ubo.Model      = glm::mat4(1.0f);
-  ubo.View       = glm::lookAt(Camera.Target + Offset, Camera.Target, Camera.Up);
+  ubo.Model = glm::mat4(1.0f);
+  ubo.View = glm::lookAt(Camera.Target + Offset, Camera.Target, Camera.Up);
   ubo.Projection = glm::perspective(
     glm::radians(45.0f),
     static_cast<float>(SwapChainExtent.width) / static_cast<float>(SwapChainExtent.height),
     0.1f, 100.0f
-  );
+    );
   ubo.Projection[1][1] *= -1;
 
   memcpy(UniformBuffersMapped[CurrentImage], &ubo, sizeof(ubo));
@@ -1816,7 +1830,8 @@ void FVulkanApplication::RecordCommandBuffer(uint32_t ImageIndex) const {
 
   vkCmdBeginRendering(CommandBuffers[FrameIndex], &RenderingInfo);
 
-  vkCmdBindPipeline(CommandBuffers[FrameIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline);
+  vkCmdBindPipeline(CommandBuffers[FrameIndex], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    Camera.bWireframe ? WireFramePipeline : GraphicsPipeline);
 
   const VkViewport Viewport = {
     .x = 0.0f,
@@ -2062,44 +2077,31 @@ void FVulkanApplication::GLFWScrollCallback(GLFWwindow *window, double xOffset, 
   app->HandleScroll(yOffset);
 }
 
-void FVulkanApplication::GLFWMouseButtonCallback(GLFWwindow *window, int button, int action, int mods) {
-  auto *app = static_cast<FVulkanApplication *>(glfwGetWindowUserPointer(window));
-  app->HandleMouseButton(button, action);
-}
-
 void FVulkanApplication::GLFWCursorPosCallback(GLFWwindow *window, double xPos, double yPos) {
   auto *app = static_cast<FVulkanApplication *>(glfwGetWindowUserPointer(window));
   app->HandleCursorPos(xPos, yPos);
 }
 
-void FVulkanApplication::HandleScroll(double yOffset) {
-  Camera.Distance -= static_cast<float>(yOffset) * 0.2f;
-  Camera.Distance  = glm::clamp(Camera.Distance, 0.5f, 20.0f);
-}
-
-void FVulkanApplication::HandleMouseButton(int button, int action) {
-  double x, y;
-  glfwGetCursorPos(Window, &x, &y);
-
-  if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
-    const bool bPressed   = (action == GLFW_PRESS);
-    const bool bShiftHeld = glfwGetKey(Window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-                            glfwGetKey(Window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-
-    Camera.bIsOrbiting = bPressed && !bShiftHeld;
-    Camera.bIsPanning  = bPressed && bShiftHeld;
-    Camera.LastMouseX  = x;
-    Camera.LastMouseY  = y;
+void FVulkanApplication::GLFWKeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods) {
+  auto *app = static_cast<FVulkanApplication *>(glfwGetWindowUserPointer(window));
+  if (key == GLFW_KEY_F && action == GLFW_PRESS) {
+    app->Camera.bWireframe = !app->Camera.bWireframe;
   }
 }
 
+
+void FVulkanApplication::HandleScroll(double yOffset) {
+  Camera.Distance -= static_cast<float>(yOffset) * 0.2f;
+  Camera.Distance = glm::clamp(Camera.Distance, 0.5f, 20.0f);
+}
+
 void FVulkanApplication::HandleCursorPos(double xPos, double yPos) {
-  const bool bShiftHeld = glfwGetKey(Window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
-                        glfwGetKey(Window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-  const bool bMMBHeld   = glfwGetMouseButton(Window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+  const bool bShiftHeld = glfwGetKey(Window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+    glfwGetKey(Window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+  const bool bMMBHeld = glfwGetMouseButton(Window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 
   Camera.bIsOrbiting = bMMBHeld && !bShiftHeld;
-  Camera.bIsPanning  = bMMBHeld &&  bShiftHeld;
+  Camera.bIsPanning = bMMBHeld && bShiftHeld;
   const auto dx = static_cast<float>(xPos - Camera.LastMouseX);
   const auto dy = static_cast<float>(yPos - Camera.LastMouseY);
   Camera.LastMouseX = xPos;
@@ -2108,25 +2110,25 @@ void FVulkanApplication::HandleCursorPos(double xPos, double yPos) {
   if (Camera.bIsOrbiting) {
     Camera.Yaw -= dx * 0.4f;
     Camera.Pitch += dy * 0.4f;
-    Camera.Pitch  = glm::clamp(Camera.Pitch, -89.0f, 89.0f);
+    Camera.Pitch = glm::clamp(Camera.Pitch, -89.0f, 89.0f);
   }
 
   if (Camera.bIsPanning) {
-    const float yawRad   = glm::radians(Camera.Yaw);
+    const float yawRad = glm::radians(Camera.Yaw);
     const float pitchRad = glm::radians(Camera.Pitch);
 
-    const glm::vec3 Offset  = {
+    const glm::vec3 Offset = {
       Camera.Distance * cosf(pitchRad) * cosf(yawRad),
       Camera.Distance * cosf(pitchRad) * sinf(yawRad),
       Camera.Distance * sinf(pitchRad),
     };
 
     const glm::vec3 Forward = glm::normalize(-Offset);
-    const glm::vec3 Right   = glm::normalize(glm::cross(Forward, Camera.Up));
-    const glm::vec3 Up      = glm::normalize(glm::cross(Right, Forward));
-    const float     Speed   = Camera.Distance * 0.001f;
+    const glm::vec3 Right = glm::normalize(glm::cross(Forward, Camera.Up));
+    const glm::vec3 Up = glm::normalize(glm::cross(Right, Forward));
+    const float Speed = Camera.Distance * 0.001f;
 
     Camera.Target -= Right * dx * Speed;
-    Camera.Target += Up    * dy * Speed;
+    Camera.Target += Up * dy * Speed;
   }
 }
