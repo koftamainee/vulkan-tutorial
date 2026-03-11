@@ -54,13 +54,13 @@ private:
 
     constexpr inline static std::array<VkVertexInputAttributeDescription, 3> GetAttributeDescription() {
       return {{
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT,    offsetof(FVertex, Position)},
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FVertex, Position)},
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(FVertex, Color)},
-        {2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(FVertex, TexCoord)},
-    }};
+        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(FVertex, TexCoord)},
+      }};
     }
 
-    bool operator==(const FVertex& other) const {
+    bool operator==(const FVertex &other) const {
       return Position == other.Position && Color == other.Color && TexCoord == other.TexCoord;
     }
   };
@@ -126,20 +126,24 @@ private:
   void DestroyCommandPool();
 
   void CreateDepthResources();
-  VkFormat FindSupportedFormat(const std::vector<VkFormat> &Formats, VkImageTiling Tiling, VkFormatFeatureFlags Features) const;
+  VkFormat FindSupportedFormat(const std::vector<VkFormat> &Formats, VkImageTiling Tiling,
+                               VkFormatFeatureFlags Features) const;
   VkFormat FindDepthFormat() const;
   static bool HasStencilComponent(VkFormat Format);
   void DestroyDepthResources();
 
   void CreateTextureImage();
-  std::pair<VkImage, VkDeviceMemory> CreateImage(uint32_t Width, uint32_t Height, uint32_t mipLevels, VkSampleCountFlagBits numSamples,
-                                                 VkFormat Format, VkImageTiling Tiling, VkImageUsageFlags Usage, VkMemoryPropertyFlags Properties) const;
+  std::pair<VkImage, VkDeviceMemory> CreateImage(uint32_t Width, uint32_t Height, uint32_t mipLevels,
+                                                 VkSampleCountFlagBits numSamples,
+                                                 VkFormat Format, VkImageTiling Tiling, VkImageUsageFlags Usage,
+                                                 VkMemoryPropertyFlags Properties) const;
   void DestroyImage(VkImage Image, VkDeviceMemory Memory) const;
   void TransitionImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout, uint32_t mipLevels) const;
   void CopyBufferToImage(VkBuffer Buffer, VkImage Image, uint32_t Width, uint32_t Height) const;
   void DestroyTextureImage();
 
-  void GenerateMipMaps(VkImage Image, VkFormat ImageFormat, int32_t TextureWidth, int32_t TextureHeight, uint32_t mipLevels) const;
+  void GenerateMipMaps(VkImage Image, VkFormat ImageFormat, int32_t TextureWidth, int32_t TextureHeight,
+                       uint32_t mipLevels) const;
 
   VkImageView CreateImageView(VkImage Image, VkFormat Format, VkImageAspectFlags AspectFlags, uint32_t mipLevels) const;
   void DestroyImageView(VkImageView ImageView) const;
@@ -292,4 +296,27 @@ private:
 
   uint32_t FrameIndex = 0;
   bool bFramebufferResized = false;
+
+  struct FCameraState {
+    glm::vec3 Position = glm::vec3(2.0f, 2.0f, 2.0f);
+    glm::vec3 Target = glm::vec3(0.0f, 0.0f, 0.0f);
+    glm::vec3 Up = glm::vec3(0.0f, 0.0f, 1.0f);
+
+    float Yaw = 30.0f;
+    float Pitch = 35.0f;
+    float Distance = 3.5f;
+
+    bool bIsPanning = false;
+    bool bIsOrbiting = false;
+    double LastMouseX = 0.0;
+    double LastMouseY = 0.0;
+  } Camera;
+
+  static void GLFWScrollCallback(GLFWwindow *window, double xOffset, double yOffset);
+  static void GLFWMouseButtonCallback(GLFWwindow *window, int button, int action, int mods);
+  static void GLFWCursorPosCallback(GLFWwindow *window, double xPos, double yPos);
+
+  void HandleScroll(double yOffset);
+  void HandleMouseButton(int button, int action);
+  void HandleCursorPos(double xPos, double yPos);
 };

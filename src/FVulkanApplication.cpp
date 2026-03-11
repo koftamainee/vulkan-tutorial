@@ -143,8 +143,13 @@ void FVulkanApplication::InitWindow() {
                             ApplicationName.c_str(), nullptr, nullptr);
   fatal(Window == nullptr, "Failed to create GLFW window");
 
+  glfwSetInputMode(Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
   glfwSetWindowUserPointer(Window, this);
   glfwSetFramebufferSizeCallback(Window, GLFWFramebufferResizeCallback);
+  glfwSetScrollCallback(Window, GLFWScrollCallback);
+  glfwSetMouseButtonCallback(Window, GLFWMouseButtonCallback);
+  glfwSetCursorPosCallback(Window, GLFWCursorPosCallback);
 }
 
 void FVulkanApplication::DeinitWindow() {
@@ -1591,17 +1596,26 @@ void FVulkanApplication::CreateUniformBuffer() {
 }
 
 void FVulkanApplication::UpdateUniformBuffer(uint32_t CurrentImage) const {
+  const float yawRad   = glm::radians(Camera.Yaw);
+  const float pitchRad = glm::radians(Camera.Pitch);
 
-  FUniformBufferObject UBO{};
-  UBO.Model = glm::rotate(glm::mat4(1.0f), glm::radians(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-  UBO.View = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-                         glm::vec3(0.0f, 0.0f, 1.0f));
-  UBO.Projection = glm::perspective(glm::radians(45.0f), static_cast<float>(SwapChainExtent.width) /
-                                    static_cast<float>(SwapChainExtent.height), 0.1f, 10.0f);
+  const glm::vec3 Offset = {
+    Camera.Distance * cosf(pitchRad) * cosf(yawRad),
+    Camera.Distance * cosf(pitchRad) * sinf(yawRad),
+    Camera.Distance * sinf(pitchRad),
+  };
 
-  UBO.Projection[1][1] *= -1;
+  FUniformBufferObject ubo{};
+  ubo.Model      = glm::mat4(1.0f);
+  ubo.View       = glm::lookAt(Camera.Target + Offset, Camera.Target, Camera.Up);
+  ubo.Projection = glm::perspective(
+    glm::radians(45.0f),
+    static_cast<float>(SwapChainExtent.width) / static_cast<float>(SwapChainExtent.height),
+    0.1f, 100.0f
+  );
+  ubo.Projection[1][1] *= -1;
 
-  memcpy(UniformBuffersMapped[CurrentImage], &UBO, sizeof(UBO));
+  memcpy(UniformBuffersMapped[CurrentImage], &ubo, sizeof(ubo));
 }
 
 void FVulkanApplication::DestroyUniformBuffer() {
@@ -2041,4 +2055,78 @@ EResult FVulkanApplication::DrawFrame() {
 void FVulkanApplication::GLFWFramebufferResizeCallback(GLFWwindow *window, int Width, int Height) {
   auto *App = static_cast<FVulkanApplication *>(glfwGetWindowUserPointer(window));
   App->bFramebufferResized = true;
+}
+
+void FVulkanApplication::GLFWScrollCallback(GLFWwindow *window, double xOffset, double yOffset) {
+  auto *app = static_cast<FVulkanApplication *>(glfwGetWindowUserPointer(window));
+  app->HandleScroll(yOffset);
+}
+
+void FVulkanApplication::GLFWMouseButtonCallback(GLFWwindow *window, int button, int action, int mods) {
+  auto *app = static_cast<FVulkanApplication *>(glfwGetWindowUserPointer(window));
+  app->HandleMouseButton(button, action);
+}
+
+void FVulkanApplication::GLFWCursorPosCallback(GLFWwindow *window, double xPos, double yPos) {
+  auto *app = static_cast<FVulkanApplication *>(glfwGetWindowUserPointer(window));
+  app->HandleCursorPos(xPos, yPos);
+}
+
+void FVulkanApplication::HandleScroll(double yOffset) {
+  Camera.Distance -= static_cast<float>(yOffset) * 0.2f;
+  Camera.Distance  = glm::clamp(Camera.Distance, 0.5f, 20.0f);
+}
+
+void FVulkanApplication::HandleMouseButton(int button, int action) {
+  double x, y;
+  glfwGetCursorPos(Window, &x, &y);
+
+  if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+    const bool bPressed   = (action == GLFW_PRESS);
+    const bool bShiftHeld = glfwGetKey(Window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                            glfwGetKey(Window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+
+    Camera.bIsOrbiting = bPressed && !bShiftHeld;
+    Camera.bIsPanning  = bPressed && bShiftHeld;
+    Camera.LastMouseX  = x;
+    Camera.LastMouseY  = y;
+  }
+}
+
+void FVulkanApplication::HandleCursorPos(double xPos, double yPos) {
+  const bool bShiftHeld = glfwGetKey(Window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
+                        glfwGetKey(Window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+  const bool bMMBHeld   = glfwGetMouseButton(Window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+
+  Camera.bIsOrbiting = bMMBHeld && !bShiftHeld;
+  Camera.bIsPanning  = bMMBHeld &&  bShiftHeld;
+  const auto dx = static_cast<float>(xPos - Camera.LastMouseX);
+  const auto dy = static_cast<float>(yPos - Camera.LastMouseY);
+  Camera.LastMouseX = xPos;
+  Camera.LastMouseY = yPos;
+
+  if (Camera.bIsOrbiting) {
+    Camera.Yaw -= dx * 0.4f;
+    Camera.Pitch += dy * 0.4f;
+    Camera.Pitch  = glm::clamp(Camera.Pitch, -89.0f, 89.0f);
+  }
+
+  if (Camera.bIsPanning) {
+    const float yawRad   = glm::radians(Camera.Yaw);
+    const float pitchRad = glm::radians(Camera.Pitch);
+
+    const glm::vec3 Offset  = {
+      Camera.Distance * cosf(pitchRad) * cosf(yawRad),
+      Camera.Distance * cosf(pitchRad) * sinf(yawRad),
+      Camera.Distance * sinf(pitchRad),
+    };
+
+    const glm::vec3 Forward = glm::normalize(-Offset);
+    const glm::vec3 Right   = glm::normalize(glm::cross(Forward, Camera.Up));
+    const glm::vec3 Up      = glm::normalize(glm::cross(Right, Forward));
+    const float     Speed   = Camera.Distance * 0.001f;
+
+    Camera.Target -= Right * dx * Speed;
+    Camera.Target += Up    * dy * Speed;
+  }
 }
